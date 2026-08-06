@@ -14,7 +14,11 @@ import tensorflow as tf
 from ytmusicapi import YTMusic
 
 model = tf.keras.models.load_model('emotion_model.h5')
-ytmusic = YTMusic('browser.json')
+import streamlit as st
+import json
+
+auth_data = st.secrets["YTMUSIC_AUTH"]
+ytmusic = YTMusic(json.loads(auth_data))
 
 class_labels = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
@@ -38,3 +42,5 @@ if img_file:
     st.write("### Recommended Songs:")
     for song in results[:5]:
         st.write(f"🎶 {song['title']} — {song['artists'][0]['name']}")
+        
+        
