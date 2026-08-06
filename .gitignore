@@ -1,0 +1,4 @@
+browser.json
+.env
+dataset/
+emotion_model.h5
