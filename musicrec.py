@@ -26,6 +26,13 @@ EMOTION_QUERIES = {
     "fear": "calm ambient songs",
     "disgust": "alternative songs",
 }
+GENRE_OPTIONS = ["Let the mood decide", "Pop", "Rock", "Acoustic", "Electronic", "Lo-fi", "Jazz", "Classical", "Hip-hop", "Indie"]
+GOAL_OPTIONS = ["Match my mood", "Lift my mood", "Help me relax"]
+GOAL_QUERIES = {
+    "Match my mood": "",
+    "Lift my mood": "uplifting feel good",
+    "Help me relax": "calm relaxing",
+}
 FALLBACK_RECOMMENDATIONS = {
     "happy": [("Good as Hell", "Lizzo"), ("Levitating", "Dua Lipa"), ("Flowers", "Miley Cyrus"), ("Can't Stop the Feeling!", "Justin Timberlake"), ("Firework", "Katy Perry")],
     "sad": [("Someone Like You", "Adele"), ("All I Want", "Kodaline"), ("Say You Won't Let Go", "James Arthur"), ("The Night We Met", "Lord Huron"), ("Perfect", "Ed Sheeran")],
@@ -80,29 +87,47 @@ def predict_emotion(image_bytes, model):
     return CLASS_LABELS[index], float(probabilities[index])
 
 
-def get_recommendations(emotion, ytmusic):
-    query = EMOTION_QUERIES.get(emotion, EMOTION_QUERIES["neutral"])
+def get_recommendations(emotion, ytmusic, genre="Let the mood decide", goal="Match my mood", limit=8):
+    mood_query = EMOTION_QUERIES.get(emotion, EMOTION_QUERIES["neutral"])
+    selected_genre = "" if genre == "Let the mood decide" else genre
+    goal_query = GOAL_QUERIES.get(goal, "")
+    query = " ".join(part for part in (mood_query, selected_genre, goal_query, "songs") if part)
     if ytmusic is not None:
         try:
-            results = ytmusic.search(query, filter="songs") or []
+            results = ytmusic.search(query, filter="songs", limit=max(limit * 2, 20)) or []
             songs = []
+            seen_ids = set()
             for song in results:
                 title = song.get("title")
                 artists = song.get("artists") or []
                 artist = artists[0].get("name") if artists else None
-                if title and artist:
-                    songs.append((title, artist))
-                if len(songs) == 5:
+                video_id = song.get("videoId")
+                if title and artist and video_id and video_id not in seen_ids:
+                    seen_ids.add(video_id)
+                    songs.append({
+                        "title": title,
+                        "artist": artist,
+                        "url": f"https://music.youtube.com/watch?v={video_id}",
+                        "thumbnail": (song.get("thumbnails") or [{}])[-1].get("url"),
+                    })
+                if len(songs) == limit:
                     break
             if songs:
-                return songs, True
+                return songs, True, query
         except Exception:
             pass
-    return FALLBACK_RECOMMENDATIONS.get(emotion, FALLBACK_RECOMMENDATIONS["neutral"]), False
+    fallback = FALLBACK_RECOMMENDATIONS.get(emotion, FALLBACK_RECOMMENDATIONS["neutral"])
+    songs = [{"title": title, "artist": artist, "url": None, "thumbnail": None} for title, artist in fallback[:limit]]
+    return songs, False, query
 
 
 st.title("🎵 Emotion Based Music Recommender")
 st.caption("Take a photo to estimate your current emotion and get song suggestions.")
+col1, col2 = st.columns(2)
+with col1:
+    selected_genre = st.selectbox("Music style", GENRE_OPTIONS)
+with col2:
+    recommendation_goal = st.selectbox("What do you want music to do?", GOAL_OPTIONS)
 
 try:
     emotion_model = load_model()
@@ -122,8 +147,15 @@ if photo is not None:
     st.subheader(f"Detected emotion: {emotion.capitalize()}")
     st.caption(f"Model confidence: {confidence:.0%}. Emotion predictions can be imperfect.")
     st.subheader("Recommended songs")
-    tracks, live_results = get_recommendations(emotion, load_ytmusic())
+    tracks, live_results, search_query = get_recommendations(
+        emotion, load_ytmusic(), selected_genre, recommendation_goal
+    )
+    st.caption(f"Search: {search_query}")
     if not live_results:
         st.caption("Showing built-in suggestions because YouTube Music search is unavailable.")
-    for index, (title, artist) in enumerate(tracks, start=1):
-        st.write(f"**{index}. {title}** — {artist}")
+    for index, track in enumerate(tracks, start=1):
+        label = f"**{index}. {track['title']}** — {track['artist']}"
+        if track["url"]:
+            st.markdown(f"{label}  [Open in YouTube Music]({track['url']})")
+        else:
+            st.write(label)
