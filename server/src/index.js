@@ -3,12 +3,16 @@ import express from "express";
 import multer from "multer";
 import mongoose from "mongoose";
 import path from "node:path";
+import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
 const pythonApi = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
 const here = path.dirname(fileURLToPath(import.meta.url));
+const scrypt = promisify(scryptCallback);
+const tokenSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "production" ? "" : "moodwave-local-development-secret-change-me");
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const allowedMoods = new Set(["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]);
 const allowedLanguages = new Set(["No preference", "English", "Hindi", "Tamil", "Telugu", "Kannada", "Malayalam", "Punjabi", "Bengali", "Marathi", "Gujarati", "Urdu", "Korean", "Japanese", "Spanish", "French", "Arabic", "Instrumental / no vocals"]);
@@ -23,13 +27,179 @@ app.use((_req, res, next) => {
 });
 app.use(express.json({ limit: "1mb" }));
 
+const userSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true, maxlength: 254 },
+  passwordHash: { type: String, required: true },
+  feedback: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  history: { type: [mongoose.Schema.Types.Mixed], default: [] },
+}, { timestamps: true });
+const User = mongoose.model("User", userSchema);
+
 const songSchema = new mongoose.Schema({
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
   title: { type: String, required: true, maxlength: 240 },
   artist: { type: String, required: true, maxlength: 240 },
-  url: { type: String, required: true, unique: true, maxlength: 512 },
+  url: { type: String, required: true, maxlength: 512 },
   thumbnail: { type: String, default: "", maxlength: 2048 },
 }, { timestamps: true });
 const SavedSong = mongoose.model("SavedSong", songSchema);
+
+const playlistSchema = new mongoose.Schema({
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+  name: { type: String, required: true, trim: true, maxlength: 80 },
+  tracks: { type: [mongoose.Schema.Types.Mixed], default: [] },
+}, { timestamps: true });
+const Playlist = mongoose.model("Playlist", playlistSchema);
+
+function cookieValue(req, name) {
+  const part = (req.headers.cookie || "").split(";").map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
+  return part ? decodeURIComponent(part.slice(name.length + 1)) : "";
+}
+function signSession(userId, expiresAt) {
+  const payload = Buffer.from(JSON.stringify({ sub: String(userId), exp: expiresAt })).toString("base64url");
+  const signature = createHmac("sha256", tokenSecret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+function currentUser(req) {
+  if (!tokenSecret) return null;
+  try {
+    const [payload, signature] = cookieValue(req, "moodwave_session").split(".");
+    if (!payload || !signature) return null;
+    const expected = createHmac("sha256", tokenSecret).update(payload).digest();
+    const actual = Buffer.from(signature, "base64url");
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString());
+    if (!decoded.sub || decoded.exp < Date.now()) return null;
+    return decoded.sub;
+  } catch { return null; }
+}
+function requireUser(req, res, next) {
+  const userId = currentUser(req);
+  if (!userId) return res.status(401).json({ error: "Sign in to use your personal library." });
+  req.userId = userId;
+  next();
+}
+function mongoReady(res) {
+  if (mongoose.connection.readyState === 1) return true;
+  res.status(503).json({ error: "Persistent account features need a MongoDB connection." });
+  return false;
+}
+function setSession(res, user) {
+  const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  res.cookie("moodwave_session", signSession(user._id, expiresAt), {
+    httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production",
+    maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
+  });
+}
+function publicUser(user) { return { id: String(user._id), email: user.email }; }
+
+app.post("/api/auth/register", async (req, res) => {
+  if (!mongoReady(res)) return;
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254 || password.length < 10 || password.length > 128) {
+    return res.status(400).json({ error: "Enter a valid email and a password of 10–128 characters." });
+  }
+  if (!tokenSecret) return res.status(503).json({ error: "Set SESSION_SECRET before enabling production sign-in." });
+  try {
+    const salt = randomBytes(16).toString("hex");
+    const derived = await scrypt(password, salt, 64);
+    const user = await User.create({ email, passwordHash: `${salt}:${derived.toString("hex")}` });
+    setSession(res, user);
+    res.status(201).json({ user: publicUser(user), feedback: [], history: [] });
+  } catch (error) {
+    if (error.code === 11000) return res.status(409).json({ error: "An account with that email already exists." });
+    res.status(500).json({ error: "Could not create your account." });
+  }
+});
+app.post("/api/auth/login", async (req, res) => {
+  if (!mongoReady(res)) return;
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!tokenSecret) return res.status(503).json({ error: "Set SESSION_SECRET before enabling production sign-in." });
+  try {
+    const user = await User.findOne({ email });
+    const [salt, storedHash] = (user?.passwordHash || ":").split(":");
+    const derived = await scrypt(password, salt || "invalid", 64);
+    const stored = Buffer.from(storedHash || "", "hex");
+    if (!user || stored.length !== derived.length || !timingSafeEqual(stored, derived)) return res.status(401).json({ error: "Email or password is incorrect." });
+    setSession(res, user);
+    res.json({ user: publicUser(user), feedback: user.feedback, history: user.history });
+  } catch { res.status(500).json({ error: "Could not sign in right now." }); }
+});
+app.get("/api/auth/me", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const user = await User.findById(req.userId).select("email feedback history").lean();
+  if (!user) return res.status(401).json({ error: "Your account is no longer available." });
+  res.json({ user: publicUser({ ...user, _id: req.userId }), feedback: user.feedback, history: user.history });
+});
+app.post("/api/auth/logout", (_req, res) => {
+  res.clearCookie("moodwave_session", { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" });
+  res.status(204).end();
+});
+
+app.get("/api/profile", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const user = await User.findById(req.userId).select("feedback history").lean();
+  if (!user) return res.status(404).json({ error: "Account not found." });
+  res.json({ feedback: user.feedback, history: user.history });
+});
+app.put("/api/profile", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const { feedback, history } = req.body || {};
+  if (!Array.isArray(feedback) || !Array.isArray(history) || feedback.length > 500 || history.length > 100) return res.status(400).json({ error: "Feedback or listening history is invalid." });
+  try {
+    await User.findByIdAndUpdate(req.userId, { $set: { feedback, history } }, { runValidators: true });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Could not save your personal data." }); }
+});
+
+app.get("/api/playlists", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  try { res.json(await Playlist.find({ owner: req.userId }).sort({ updatedAt: -1 }).lean()); }
+  catch { res.status(500).json({ error: "Could not load playlists." }); }
+});
+app.post("/api/playlists", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  if (!name || name.length > 80) return res.status(400).json({ error: "Playlist names must be 1–80 characters." });
+  try { res.status(201).json(await Playlist.create({ owner: req.userId, name, tracks: [] })); }
+  catch { res.status(500).json({ error: "Could not create playlist." }); }
+});
+app.post("/api/playlists/:id/tracks", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const { track } = req.body || {};
+  if (!track || typeof track.title !== "string" || typeof track.artist !== "string" || typeof track.url !== "string" || !track.url.startsWith("https://music.youtube.com/")) return res.status(400).json({ error: "Choose a valid track to add." });
+  try {
+    const playlist = await Playlist.findOne({ _id: req.params.id, owner: req.userId });
+    if (!playlist) return res.status(404).json({ error: "Playlist not found." });
+    if (playlist.tracks.length >= 500) return res.status(409).json({ error: "This playlist has reached its 500 track limit." });
+    if (!playlist.tracks.some((item) => item.url === track.url)) playlist.tracks.push({ title: track.title.slice(0, 240), artist: track.artist.slice(0, 240), url: track.url.slice(0, 512), thumbnail: String(track.thumbnail || "").slice(0, 2048) });
+    await playlist.save(); res.json(playlist);
+  } catch { res.status(500).json({ error: "Could not update playlist." }); }
+});
+app.delete("/api/playlists/:id/tracks", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const url = req.body?.url;
+  try {
+    const playlist = await Playlist.findOneAndUpdate({ _id: req.params.id, owner: req.userId }, { $pull: { tracks: { url } } }, { new: true });
+    if (!playlist) return res.status(404).json({ error: "Playlist not found." });
+    res.json(playlist);
+  } catch { res.status(500).json({ error: "Could not update playlist." }); }
+});
+app.delete("/api/playlists/:id", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  try { const result = await Playlist.deleteOne({ _id: req.params.id, owner: req.userId }); result.deletedCount ? res.status(204).end() : res.status(404).json({ error: "Playlist not found." }); }
+  catch { res.status(500).json({ error: "Could not delete playlist." }); }
+});
+app.delete("/api/account", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  try {
+    await Promise.all([SavedSong.deleteMany({ owner: req.userId }), Playlist.deleteMany({ owner: req.userId }), User.findByIdAndDelete(req.userId)]);
+    res.clearCookie("moodwave_session", { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/" });
+    res.status(204).end();
+  } catch { res.status(500).json({ error: "Could not delete the account and its data." }); }
+});
 
 app.get("/api/health", async (_req, res) => {
   let python = false;
