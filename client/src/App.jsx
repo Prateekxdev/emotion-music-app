@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AudioLines, Bookmark, Camera, Check, ChevronDown, Disc3, ExternalLink, Heart, Headphones, LoaderCircle, Music2, Radio, Sparkles, Upload, Waves, X } from "lucide-react";
 
 const genres = ["Let the mood decide", "Pop", "Rock", "Acoustic", "Electronic", "Lo-fi", "Jazz", "Classical", "Hip-hop", "Indie"];
@@ -20,6 +20,10 @@ async function api(path, options = {}) {
 export default function App() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
   const [genre, setGenre] = useState(genres[0]);
   const [goal, setGoal] = useState(goals[0]);
   const [result, setResult] = useState(null);
@@ -42,13 +46,63 @@ export default function App() {
     return () => URL.revokeObjectURL(objectUrl);
   }, [file]);
 
+  useEffect(() => {
+    if (cameraOpen && cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [cameraOpen, cameraStream]);
+
+  useEffect(() => () => cameraStream?.getTracks().forEach((track) => track.stop()), [cameraStream]);
+
   const mood = result?.emotion?.toLowerCase();
   const copy = moodCopy[mood] || ["A soundtrack for right now.", "YOUR PERSONAL MIX"];
   const savedUrlSet = useMemo(() => new Set(favorites.map((song) => song.url)), [favorites]);
 
   function choosePhoto(nextFile) {
     if (!nextFile) return;
+    closeCamera();
     setFile(nextFile); setResult(null); setError(""); setActiveTab("mix");
+  }
+
+  async function openCamera() {
+    setError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Camera access is unavailable here. Open the app on localhost or HTTPS, or choose a photo instead.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      setCameraStream(stream);
+      setCameraOpen(true);
+    } catch (err) {
+      const message = err.name === "NotAllowedError"
+        ? "Camera permission was blocked. Allow camera access in your browser settings, or choose a photo instead."
+        : "We couldn't open the camera. Check that it is connected and not being used by another app.";
+      setError(message);
+    }
+  }
+
+  function closeCamera() {
+    cameraStream?.getTracks().forEach((track) => track.stop());
+    setCameraStream(null);
+    setCameraOpen(false);
+  }
+
+  function capturePhoto() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || !video.videoWidth) {
+      setError("The camera is still starting. Wait a moment and try again.");
+      return;
+    }
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) { setError("We couldn't capture that photo. Please try again."); return; }
+      choosePhoto(new File([blob], "mood-check.jpg", { type: "image/jpeg" }));
+    }, "image/jpeg", 0.92);
   }
 
   async function makeMix(event) {
@@ -103,10 +157,14 @@ export default function App() {
         <section className="checkin-card panel">
           <div className="card-heading"><div><span className="step-tag">01 / MOOD CHECK-IN</span><h2>Read the room</h2><p>Share a quick photo for an emotion estimate.</p></div><div className="heading-icon"><Camera size={19}/></div></div>
           <form onSubmit={makeMix}>
-            <label className={`dropzone ${preview ? "has-preview" : ""}`}>
-              {preview ? <><img src={preview} alt="Your selected portrait"/><span className="photo-change"><Camera size={14}/> Change photo</span></> : <><span className="upload-icon"><Upload size={21}/></span><strong>Drop in a photo, or browse</strong><span>JPG, PNG or WebP · up to 10 MB</span><em>Choose photo</em></>}
-              <input type="file" accept="image/jpeg,image/png,image/webp" capture="user" onChange={(event) => choosePhoto(event.target.files?.[0])}/>
-            </label>
+            {cameraOpen ? <div className="camera-live"><video ref={videoRef} autoPlay muted playsInline/><div className="camera-controls"><span><span className="camera-live-dot"/> CAMERA ON</span><button type="button" onClick={capturePhoto}><Camera size={15}/> Capture photo</button><button type="button" className="camera-cancel" onClick={closeCamera}>Cancel</button></div></div> : <>
+              <label className={`dropzone ${preview ? "has-preview" : ""}`}>
+                {preview ? <><img src={preview} alt="Your selected portrait"/><span className="photo-change"><Camera size={14}/> Change photo</span></> : <><span className="upload-icon"><Upload size={21}/></span><strong>Choose a photo, or open the camera</strong><span>JPG, PNG or WebP · up to 10 MB</span><em>Browse files</em></>}
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event.target.files?.[0])}/>
+              </label>
+              <div className="camera-launch-row"><span>For the full mood check-in</span><button type="button" onClick={openCamera}><Camera size={15}/> Open camera</button></div>
+            </>}
+            <canvas ref={canvasRef} className="capture-canvas" aria-hidden="true"/>
             <div className="privacy-note"><span className="privacy-lock">◈</span> Your photo is used for this mood check only.</div>
             <div className="field-row"><label className="field"><span>YOUR SOUND</span><div className="select-wrap"><Disc3 size={16}/><select value={genre} onChange={(event) => setGenre(event.target.value)}>{genres.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={15}/></div></label><label className="field"><span>THE FEELING</span><div className="select-wrap"><Radio size={16}/><select value={goal} onChange={(event) => setGoal(event.target.value)}>{goals.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={15}/></div></label></div>
             <button className="primary-button" disabled={busy || !file}>{busy ? <><LoaderCircle className="spin" size={18}/> Reading your mood...</> : <><Sparkles size={17}/> Find my soundtrack <span>→</span></>}</button>
