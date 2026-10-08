@@ -1,18 +1,157 @@
-# Moodwave
+<div align="center">
+  <img src="client/public/assets/moodwave-logo.svg" alt="Moodwave" width="420" />
+  <h1>Moodwave</h1>
+  <p><strong>A soundtrack that starts with how you feel.</strong></p>
+  <p>Explore mood-aware music recommendations, shape your mix, and keep the tracks you want to revisit.</p>
 
-Moodwave combines the existing TensorFlow emotion classifier with a React music discovery UI. The Python service predicts an emotion from a photo and searches YouTube Music; Express provides the app API and stores saved tracks in MongoDB. The frontend can run on Vercel while the Node and Python APIs run as separate Docker services.
+  <p>
+    <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white" />
+    <img alt="Vite" src="https://img.shields.io/badge/Vite-6-646CFF?logo=vite&logoColor=white" />
+    <img alt="Node.js" src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white" />
+    <img alt="Python" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" />
+    <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" />
+    <img alt="MongoDB" src="https://img.shields.io/badge/MongoDB-optional%20local%20setup-47A248?logo=mongodb&logoColor=white" />
+  </p>
+</div>
 
-## Requirements
+---
 
-- Python 3.11 and the packages in `requirements.txt`
+## Table of contents
+
+- [The idea](#the-idea)
+- [What you can do](#what-you-can-do)
+- [How it works](#how-it-works)
+- [Project architecture](#project-architecture)
+- [Tech stack](#tech-stack)
+- [Run locally](#run-locally)
+- [Deploy](#deploy)
+- [Configuration](#configuration)
+- [Privacy and security](#privacy-and-security)
+- [Project structure](#project-structure)
+- [Helpful commands](#helpful-commands)
+
+## The idea
+
+Moodwave makes music discovery feel personal without making a photo check-in mandatory. Choose a mood yourself or optionally ask the emotion model for an estimate, tell Moodwave what kind of sound you want, and build a mix to explore.
+
+> **Your feelings are yours to name.** The photo check-in is an estimate for music discovery, not a diagnosis.
+
+## What you can do
+
+| Discover | Personalize | Keep your music |
+| --- | --- | --- |
+| Choose a mood yourself or request an optional photo-based estimate. | Set a language, sound, and listening goal before asking for recommendations. | Save tracks, create playlists, and keep a listening history. |
+| Browse YouTube Music results, with built-in mood picks when live search is unavailable. | Like or skip tracks; recent feedback can influence future mixes. | Use a playback queue with previous/next controls and compact or expanded playback. |
+
+### The listener journey
+
+```mermaid
+flowchart LR
+    A["Choose a mood"] --> B{"Photo check-in?"}
+    B -->|"Optional"| C["Estimate a mood"]
+    B -->|"Skip"| D["Pick a mood manually"]
+    C --> E["Set language, sound & goal"]
+    D --> E
+    E --> F["Build a recommendation mix"]
+    F --> G["Play a track"]
+    F --> H["Like or skip"]
+    H --> I["Shape a future mix"]
+    G --> J["Save or add to a playlist"]
+```
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    actor Listener
+    participant UI as React + Vite
+    participant API as Express API
+    participant ML as FastAPI + emotion model
+    participant Music as YouTube Music search
+    participant DB as MongoDB (optional)
+
+    Listener->>UI: Choose a mood and preferences
+    UI->>API: Request recommendations
+    API->>ML: Forward mood, preferences & feedback
+    ML->>Music: Search for matching tracks
+    Music-->>ML: Matching tracks
+    ML-->>API: Tracks and recommendation details
+    API-->>UI: Recommendation mix
+    UI-->>Listener: Browse and play
+
+    opt Photo check-in
+        Listener->>UI: Select or capture a photo
+        UI->>API: Upload photo for analysis
+        API->>ML: Forward image for inference
+        ML-->>API: Mood estimate and confidence
+        API-->>UI: Mood estimate
+    end
+
+    opt Signed-in library features
+        UI->>API: Save track, playlist or account history
+        API->>DB: Store user-scoped data
+        DB-->>API: Saved data
+        API-->>UI: Updated library
+    end
+```
+
+## Project architecture
+
+```mermaid
+flowchart TB
+    Browser["Listener's browser"]
+    Frontend["React + Vite frontend<br/>Local: :5173 / Vercel"]
+    Node["Express API<br/>Local: :5000 / Docker"]
+    Python["FastAPI emotion & music API<br/>Local: :8000 / Docker"]
+    Model["TensorFlow emotion model"]
+    YT["YouTube Music search"]
+    Mongo[("MongoDB<br/>accounts & libraries")]
+    Resend["Resend email API<br/>verification & recovery"]
+
+    Browser --> Frontend
+    Frontend -->|"REST API + session cookie"| Node
+    Node -->|"Photo and recommendations"| Python
+    Python --> Model
+    Python --> YT
+    Node -->|"Optional account data"| Mongo
+    Node -->|"Configured account emails"| Resend
+```
+
+The frontend and API are separate deployable pieces. In the Vercel setup, `VITE_API_URL` points the browser to the Node API; the Node service forwards emotion and recommendation work to the Python service. MongoDB is needed for accounts and synced libraries, but not for local mood discovery.
+
+### Recommendation flow at a glance
+
+```text
+Mood
+  + optional language, genre and listening goal
+  + recent likes and skips
+  ↓
+YouTube Music search (or built-in mood picks when unavailable)
+  ↓
+Ranked mix → playback queue → optional saved library
+```
+
+## Tech stack
+
+| Layer | Technology | Responsibility |
+| --- | --- | --- |
+| Web app | React 18, Vite 6, Lucide | Mood discovery, preferences, recommendations, player, and library UI |
+| Application API | Node.js 20+, Express | API routes, signed HTTP-only sessions, account flows, and library endpoints |
+| Emotion/music API | Python 3.11, FastAPI, TensorFlow, OpenCV | Image inference and recommendation search |
+| Music search | `ytmusicapi` | Finds YouTube Music results; fallback mood picks are available |
+| Persistence | MongoDB / MongoDB Atlas | Optional accounts, favorites, playlists, and synced user data |
+| Account email | Resend | Verification and password-reset messages when configured |
+| Deployment | Vercel and Docker | Static frontend and independently hosted API services |
+
+## Run locally
+
+### Prerequisites
+
+- Python 3.11
 - Node.js 20 or newer
-- MongoDB running locally, or a MongoDB Atlas connection string (required for accounts, playlists, saved tracks, feedback, and synced history)
+- MongoDB, only if you want to use accounts and persistent libraries
 
-Moodwave supports email/password accounts. Passwords are stored as scrypt hashes, and sessions use signed HTTP-only cookies. Each user's library and activity are scoped to their account. Use HTTPS and set a unique `SESSION_SECRET` before deployment.
-
-## Run locally on Windows PowerShell
-
-Use a project-local virtual environment so the website, model training script, and dependencies all use Python 3.11. From this project folder, confirm `python --version` reports 3.11, then run:
+From the project root, create a virtual environment and install Python dependencies:
 
 ```powershell
 python -m venv .venv
@@ -21,99 +160,166 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-If PowerShell blocks activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that terminal, then activate the environment. Install Python 3.11 and enable **Add Python to PATH** if needed. Close and reopen PowerShell after installation.
+If PowerShell blocks activation, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in that terminal and activate again.
 
-Install the React and Express dependencies. Use `npm.cmd` in PowerShell if the `npm` command is blocked by the execution policy:
+Install the JavaScript workspaces:
 
 ```powershell
 npm.cmd install
 ```
 
-Configure MongoDB and account sessions:
+For account and library features, copy the example server configuration and set your local MongoDB URL and a development session secret:
 
 ```powershell
 Copy-Item server/.env.example server/.env
 ```
 
-Edit `server/.env` and set `MONGODB_URI` to your local database or Atlas connection string. Set `WEB_ORIGIN` to the exact frontend origin. Replace `SESSION_SECRET` with a long random value. Account email verification and password recovery use the Resend email API: set `EMAIL_API_KEY`, a verified `EMAIL_FROM`, and the public `PUBLIC_APP_URL`. In local development, verification/reset links are shown directly in the account dialog if email credentials are empty. Keep `.env` private. Mood discovery still works without MongoDB, but account features are disabled.
-
-With `.venv` activated, start all three app services from the project root. Keeping the environment activated matters because the Python emotion service uses the active `python` command:
+Then start the frontend and both APIs together:
 
 ```powershell
 npm.cmd run dev
 ```
 
-Open the Vite URL printed in the terminal, usually `http://localhost:5173`. The React app calls Express on port 5000, which forwards photo analysis to FastAPI on port 8000. MongoDB stores account data and private libraries.
+Open **http://localhost:5173**. The local services use:
 
-## Features
+| Service | Local address |
+| --- | --- |
+| Moodwave website | `http://localhost:5173` |
+| Express API | `http://localhost:5000` |
+| FastAPI | `http://127.0.0.1:8000` |
+| Node API health | `http://localhost:5000/api/health` |
+| Emotion API health | `http://127.0.0.1:8000/health` |
 
-- Private accounts with saved tracks and personal playlists.
-- Feedback saved to your account and used to rank future mixes.
-- Recommendation explanations based on mood, preferences, and your feedback.
-- Mood mix and listening history, plus a persistent next/previous player queue.
-- Privacy controls to clear history and feedback or delete your account and its data.
+Without MongoDB, discovery and recommendations can still be used, but signed-in features such as saved tracks and playlists are unavailable.
 
-## Production deployment with Docker Compose
+## Deploy
 
-Install Docker Desktop, copy `.env.example` to `.env`, replace `SESSION_SECRET` with a unique random secret, set `WEB_ORIGIN` to the public origin, and configure the email provider values before enabling account registration in production. Then run:
+### Option A: Vercel frontend + separate API services
+
+#### 1. Deploy the frontend to Vercel
+
+Import this repository into Vercel and use the **repository root** as the project root. The included [`vercel.json`](./vercel.json) configures the client build and `client/dist` output.
+
+Add this Vercel environment variable for each environment you deploy:
+
+| Variable | Value |
+| --- | --- |
+| `VITE_API_URL` | HTTPS origin of your Node API, for example `https://api.example.com` (no trailing slash) |
+
+The value is embedded in the frontend at build time, so redeploy after changing it.
+
+#### 2. Deploy the Node API
+
+Build a Docker service from the repository root using [`Dockerfile.server`](./Dockerfile.server), and expose port `5000`. Configure:
+
+| Variable | Purpose |
+| --- | --- |
+| `NODE_ENV` | Set to `production` |
+| `PORT` | Service port; typically `5000` |
+| `WEB_ORIGIN` | Exact frontend origin, such as `https://app.example.com`; comma-separate additional allowed origins |
+| `PYTHON_API_URL` | Reachable HTTPS origin of the Python emotion API |
+| `MONGODB_URI` | Persistent MongoDB connection string |
+| `SESSION_SECRET` | Unique random value of at least 32 characters |
+| `PUBLIC_APP_URL` | Public frontend URL used in account emails |
+| `EMAIL_API_KEY` | Resend API key |
+| `EMAIL_FROM` | Sender address verified with Resend |
+
+Do not use `*` for `WEB_ORIGIN`: browser sessions use credentials and require an explicit allowed origin.
+
+#### 3. Deploy the Python emotion API
+
+Build a second Docker service from the repository root using [`Dockerfile.python`](./Dockerfile.python), and expose port `8000` to the Node service. The Python image needs both the source under `python/` and the `emotion_model.h5` file in the project root at build time.
+
+> **Model file note:** `emotion_model.h5` is intentionally excluded by `.gitignore` because it is a generated/large model artifact. Make it available in the Docker build context through your deployment provider's artifact or secret-file mechanism before building the Python image. Without it, photo mood detection cannot start successfully.
+
+#### 4. Connect domains and check the deployment
+
+Use HTTPS custom domains on the **same site** for the frontend and Node API (for example `app.example.com` and `api.example.com`). The signed session cookie is `Secure` and `SameSite=Lax`; unrelated Vercel and API-provider domains may be treated as third-party and cause browsers to block sign-in cookies.
+
+Set the Node service health check to `/api/health`, allow it to reach MongoDB Atlas, and keep the Python API on private networking when available. After deployment:
+
+1. Open `https://api.example.com/api/health`; check that Python and the model are available.
+2. Try mood recommendations and a photo check-in.
+3. If using accounts, test verification email, sign-in, saved tracks, and playlists.
+
+MongoDB is required for persistent account/library features. Resend credentials and a verified sender are required for production account verification and password recovery.
+
+### Option B: Docker Compose
+
+Install Docker Desktop, copy `.env.example` to `.env`, and set a unique `SESSION_SECRET`. Set `WEB_ORIGIN` to the public site origin and configure the email values if you plan to enable accounts. Ensure the model file is present in the build context, then run:
 
 ```powershell
 docker compose up --build -d
 ```
 
-Open `http://localhost:5000`. Compose starts the web app, Python emotion API, and MongoDB with persistent storage. The web server revalidates the HTML page and applies long-lived immutable caching to fingerprinted JavaScript and CSS bundles. Put a TLS reverse proxy in front of the app for public deployments. Keep `.env` and database backups private. To stop the services, run `docker compose down`; the database volume remains. To remove it too, run `docker compose down -v`.
+Open **http://localhost:5000**. Compose starts the web/API service, Python service, and MongoDB with persistent storage. For public access, put HTTPS/TLS in front of the app. Stop services without deleting database storage with:
 
-The existing Streamlit app can still be started separately with `python -m streamlit run python/musicrec.py`.
+```powershell
+docker compose down
+```
 
-Train the emotion model with the same active environment by running `python python/train_model.py`. Keep the image scaling (`0–1`) and seven class folder names/order consistent with `python/emotion_api.py`; the training script checks the labels before starting.
+## Configuration
 
-## YouTube Music search
+| File | What it configures |
+| --- | --- |
+| [`.env.example`](./.env.example) | Docker Compose and combined-app production settings |
+| [`server/.env.example`](./server/.env.example) | Local Express settings and allowed development origins |
+| [`client/.env.example`](./client/.env.example) | Optional Vite API-origin setting |
+| [`vercel.json`](./vercel.json) | Vercel client build and static output |
+| [`requirements.txt`](./requirements.txt) | Full local Python dependencies, including the Streamlit app |
+| [`requirements-api.txt`](./requirements-api.txt) | Lean dependencies for the FastAPI container |
 
-Live search uses the existing `browser.json` if present. To create it, run `python python/setup_ytmusic.py` from the project root and follow the interactive prompt. Keep browser credentials local; do not commit `browser.json` or paste its contents into source files. Built-in mood suggestions remain available if live search is unavailable.
+Never commit real `.env` files, `browser.json`, Resend keys, database credentials, or production session secrets.
 
-## Deploy frontend to Vercel and APIs separately
+## Privacy and security
 
-### Vercel frontend
+- Photo check-in is optional. Photos are sent to the emotion API for inference and are not stored by the app.
+- A mood prediction is a music-discovery estimate, not medical advice or a diagnosis.
+- Account sessions use signed HTTP-only cookies; passwords are stored as scrypt hashes.
+- Saved data is scoped to the signed-in account. MongoDB is not required for mood discovery.
+- Keep production services on HTTPS, use a strong unique session secret, and restrict API origins.
 
-Create a Vercel project from this repository with the **repository root** as the project root. `vercel.json` sets the install command, workspace build command, and `client/dist` output directory. Set this Vercel environment variable for Production and Preview:
+## Project structure
 
-- `VITE_API_URL` — the HTTPS origin of the Node API, with no trailing slash (for example `https://api.example.com`)
+```text
+moodwave/
+├── client/
+│   ├── public/assets/       # Logos and public image assets
+│   └── src/
+│       ├── components/      # Reusable interface components
+│       └── lib/             # API and local-storage helpers
+├── server/
+│   └── src/index.js         # Express API, accounts, and MongoDB models
+├── python/
+│   ├── emotion_api.py       # FastAPI inference and recommendation service
+│   ├── musicrec.py          # Original Streamlit interface
+│   ├── train_model.py       # Model training script
+│   ├── setup_ytmusic.py     # Optional local YouTube Music setup
+│   └── test_music.py        # YouTube Music smoke test
+├── emotion_model.h5         # Local model artifact; provide to the Python image build
+├── Dockerfile               # Combined app image for Docker Compose
+├── Dockerfile.server        # Standalone Express API image
+├── Dockerfile.python        # Standalone FastAPI image
+├── docker-compose.yml       # Local/combined production stack
+├── requirements.txt         # Full local Python environment
+├── requirements-api.txt     # Python API container dependencies
+└── vercel.json              # Vercel frontend configuration
+```
 
-Deploy the project after setting the environment variable; Vite embeds it at build time.
+## Helpful commands
 
-### Node API service
+| Task | Command |
+| --- | --- |
+| Install JavaScript dependencies | `npm.cmd install` |
+| Start local web and API services | `npm.cmd run dev` |
+| Build the frontend | `npm.cmd run build` |
+| Start the original Streamlit app | `python -m streamlit run python/musicrec.py` |
+| Train the emotion model | `python python/train_model.py` |
+| Configure local YouTube Music search | `python python/setup_ytmusic.py` |
+| Start Docker Compose | `docker compose up --build -d` |
 
-Deploy the repository as a Docker service using `Dockerfile.server` and the repository root as the build context. Expose port `5000`. Configure:
+---
 
-- `NODE_ENV=production`
-- `PORT=5000` (or the port required by the host)
-- `WEB_ORIGIN=https://app.example.com` — exact frontend origin, without a trailing slash
-- `PYTHON_API_URL=https://emotion-api.example.com` — the Python API origin
-- `MONGODB_URI` — a persistent MongoDB connection string
-- `SESSION_SECRET` — a unique random secret of at least 32 characters
-- `PUBLIC_APP_URL=https://app.example.com`
-- `EMAIL_API_KEY` and `EMAIL_FROM` — verified Resend credentials for account verification and password reset
-
-`WEB_ORIGIN` can contain comma-separated exact origins when you need to allow preview frontends. Do not use `*`.
-
-### Python emotion API service
-
-Deploy the repository as a second Docker service using `Dockerfile.python` and the repository root as the build context. Expose port `8000`; set the Node API's `PYTHON_API_URL` to this service's reachable HTTPS origin. It loads the tracked `emotion_model.h5` during startup. Keep this service private to the Node API when your hosting provider supports private networking.
-
-### Domains, accounts, and checks
-
-For reliable browser sign-in, use HTTPS custom domains on the same site (for example `app.example.com` and `api.example.com`). The session cookie is secure and `SameSite=Lax`; browsers may block it when the Vercel frontend and API are on unrelated provider domains. Set `WEB_ORIGIN` to the actual frontend origin and `PUBLIC_APP_URL` to the actual frontend URL.
-
-Set the Node service health-check path to `/api/health`. Allow it to connect to MongoDB Atlas from your hosting provider, and do not expose the Python service publicly unless needed. After deployment, check `https://api.example.com/api/health`, then verify photo detection, recommendations, account verification email, sign-in, and the private library. `model_available` should be `true`; account/library operations require MongoDB and account email requires Resend configuration.
-
-## Project layout
-
-- `client/` — React + Vite frontend
-- `server/` — Express API and MongoDB saved-track model
-- `python/` — FastAPI emotion API, original Streamlit interface, model training, YouTube Music setup, and YouTube Music smoke test
-- `client/public/assets/` — logo and other static image assets
-- `requirements.txt` — full local Python environment, including the legacy Streamlit app
-- `requirements-api.txt` — lean Python API container dependencies
-- `Dockerfile.server` — standalone Node API container
-- `Dockerfile.python` — standalone Python emotion API container
-- `vercel.json` — Vercel frontend build configuration
+<div align="center">
+  <sub>Made for the mood you're in — and the one you're heading toward.</sub>
+</div>
