@@ -3,7 +3,7 @@ from pathlib import Path
 import tensorflow as tf
 
 # Resolve paths from this file so the script works from any current directory.
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 TRAIN_DIR = PROJECT_DIR / "dataset" / "train"
 TEST_DIR = PROJECT_DIR / "dataset" / "test"
 MODEL_PATH = PROJECT_DIR / "emotion_model.h5"
@@ -18,7 +18,7 @@ def main():
         if not data_dir.is_dir():
             raise FileNotFoundError(
                 f"Training data folder not found: {data_dir}\n"
-                "Expected dataset/train and dataset/test next to train_model.py, "
+                "Expected dataset/train and dataset/test in the project root, "
                 "with one subfolder per emotion class."
             )
 

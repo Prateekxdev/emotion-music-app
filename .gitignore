@@ -8,3 +8,7 @@ __pycache__/
 node_modules/
 client/dist/
 server/.env
+.vercel/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

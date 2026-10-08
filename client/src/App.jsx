@@ -24,7 +24,7 @@ const sampleTracks = [["Golden", "Harry Styles"], ["Sunflower", "Post Malone & S
 
 function EntryScreen() {
   return <main className="entry-screen" role="status" aria-label="Loading Moodwave" aria-busy="true">
-    <img src="/moodwave-logo.png" alt="Moodwave music logo" decoding="async" />
+    <img src="/assets/moodwave-logo.png" alt="Moodwave music logo" decoding="async" />
     <span className="entry-loading" aria-hidden="true" />
   </main>;
 }

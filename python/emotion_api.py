@@ -16,7 +16,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from ytmusicapi import YTMusic
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "emotion_model.h5"
 LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 PIXEL_SCALE = 1.0 / 255.0

@@ -2,10 +2,13 @@ node_modules
 client/node_modules
 server/node_modules
 client/dist
+.vercel
 .venv
 __pycache__
 dataset
 .git
+.streamlit
 browser.json
 *.env
+.env
 server/.env

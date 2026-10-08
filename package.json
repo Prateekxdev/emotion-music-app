@@ -4,7 +4,7 @@
   "private": true,
   "workspaces": ["client", "server"],
   "scripts": {
-    "dev": "concurrently -k -n PYTHON,SERVER,CLIENT -c magenta,cyan,green \"python -m uvicorn emotion_api:app --reload --port 8000\" \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
+    "dev": "concurrently -k -n PYTHON,SERVER,CLIENT -c magenta,cyan,green \"python -m uvicorn python.emotion_api:app --reload --port 8000\" \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
     "build": "npm run build --workspace client",
     "start": "npm run start --workspace server"
   },

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { existsSync } from "node:fs";
 import multer from "multer";
 import mongoose from "mongoose";
 import path from "node:path";
@@ -9,10 +10,12 @@ import { fileURLToPath } from "node:url";
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
-const pythonApi = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
+const pythonApi = (process.env.PYTHON_API_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
 const here = path.dirname(fileURLToPath(import.meta.url));
 const scrypt = promisify(scryptCallback);
 const tokenSecret = process.env.SESSION_SECRET || (process.env.NODE_ENV === "production" ? "" : "moodwave-local-development-secret-change-me");
+const allowedWebOrigins = (process.env.WEB_ORIGIN || (process.env.NODE_ENV === "production" ? "" : "http://localhost:5173,http://127.0.0.1:5173"))
+  .split(",").map((origin) => origin.trim()).filter(Boolean);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const allowedMoods = new Set(["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]);
 const allowedLanguages = new Set(["No preference", "English", "Hindi", "Tamil", "Telugu", "Kannada", "Malayalam", "Punjabi", "Bengali", "Marathi", "Gujarati", "Urdu", "Korean", "Japanese", "Spanish", "French", "Arabic", "Instrumental / no vocals"]);
@@ -23,6 +26,23 @@ app.use((_req, res, next) => {
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+  next();
+});
+app.use((req, res, next) => {
+  const origin = req.get("Origin");
+  res.vary("Origin");
+  if (origin && allowedWebOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  } else if (origin) {
+    return res.status(403).json({ error: "This website origin is not allowed." });
+  }
+  if (req.method === "OPTIONS") {
+    if (!origin || !allowedWebOrigins.includes(origin)) return res.sendStatus(403);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    return res.status(204).end();
+  }
   next();
 });
 app.use(express.json({ limit: "1mb" }));
@@ -398,19 +418,30 @@ app.use((error, _req, res, _next) => {
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found." }));
 
 const clientDist = path.resolve(here, "../../client/dist");
-app.use(express.static(clientDist, {
-  maxAge: "1d",
-  setHeaders(res, filePath) {
-    const fileName = path.basename(filePath);
-    if (fileName === "index.html") {
-      res.setHeader("Cache-Control", "no-cache");
-    } else if (filePath.includes(`${path.sep}assets${path.sep}`) && /-[\w-]{8,}\.(?:js|css)$/.test(fileName)) {
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+if (existsSync(clientDist)) {
+  app.use(express.static(clientDist, {
+    maxAge: "1d",
+    setHeaders(res, filePath) {
+      const fileName = path.basename(filePath);
+      if (fileName === "index.html") {
+        res.setHeader("Cache-Control", "no-cache");
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`) && /-[\w-]{8,}\.(?:js|css)$/.test(fileName)) {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
     }
-  },
-}));
-app.get("*", (_req, res, next) => res.sendFile(path.join(clientDist, "index.html"), (error) => error && next()));
+  }));
+  app.get("*", (_req, res, next) => res.sendFile(path.join(clientDist, "index.html"), (error) => error && next()));
+}
 
+if (process.env.NODE_ENV === "production" && !tokenSecret) {
+  throw new Error("SESSION_SECRET must be set in production.");
+}
+if (process.env.NODE_ENV === "production" && tokenSecret.length < 32) {
+  throw new Error("SESSION_SECRET must be at least 32 characters in production.");
+}
+if (process.env.NODE_ENV === "production" && allowedWebOrigins.length === 0) {
+  throw new Error("WEB_ORIGIN must be set in production.");
+}
 if (process.env.MONGODB_URI) {
   mongoose.connect(process.env.MONGODB_URI).catch((error) => console.error("MongoDB connection failed:", error.message));
 } else {

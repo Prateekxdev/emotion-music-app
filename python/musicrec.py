@@ -11,7 +11,7 @@ from ytmusicapi import YTMusic
 
 st.set_page_config(page_title="Moodwave | Music for your mood", page_icon="🎧", layout="wide")
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 MODEL_PATH = ROOT / "emotion_model.h5"
 IMAGE_SIZE = (224, 224)
 
@@ -162,7 +162,7 @@ try:
     emotion_model = load_model()
 except Exception as exc:
     st.error(f"The emotion model could not be loaded: {exc}")
-    st.info("Place emotion_model.h5 in the same folder as musicrec.py.")
+    st.info("Place emotion_model.h5 in the project root.")
     st.stop()
 
 left, right = st.columns([0.9, 1.1], gap="large")

@@ -1,0 +1,8 @@
+opencv-python-headless
+tensorflow
+numpy
+requests
+ytmusicapi
+fastapi
+uvicorn[standard]
+python-multipart
