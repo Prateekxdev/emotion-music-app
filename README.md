@@ -244,6 +244,17 @@ Set the Node service health check to `/api/health`, allow it to reach MongoDB At
 
 MongoDB is required for persistent account/library features. Resend credentials and a verified sender are required for production account verification and password recovery.
 
+#### Prepare MongoDB Atlas
+
+1. In Atlas, create a database user with a strong password. This is a **database user**, not your Atlas website login.
+2. Add your Node API host's outbound IP address to Atlas **Network Access**. If the host has dynamic egress IPs, follow that provider's recommended private networking or egress-IP setup instead of leaving broad access enabled.
+3. In Atlas, choose **Connect → Drivers** and copy the Node.js connection string. Set the database name to `moodwave`, and replace the password placeholder. URL-encode special characters in the database password.
+4. Add the full string as the Node API service's `MONGODB_URI` environment variable/secret. Do not put it in Vercel's frontend environment, commit it, or send it in chat.
+5. Redeploy or restart the Node API. Its production startup now waits for MongoDB and exits with an error if the URI is missing or the database cannot be reached.
+6. Check `/api/health` and confirm its `mongo` field is `true`.
+
+The local `server/.env.example` uses a local MongoDB URI by default. For a local Atlas connection, replace it only in your untracked `server/.env` file. Docker Compose continues to use its own `mongo` service by default.
+
 ### Option B: Docker Compose
 
 Install Docker Desktop, copy `.env.example` to `.env`, and set a unique `SESSION_SECRET`. Set `WEB_ORIGIN` to the public site origin and configure the email values if you plan to enable accounts. Ensure the model file is present in the build context, then run:

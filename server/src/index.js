@@ -442,9 +442,26 @@ if (process.env.NODE_ENV === "production" && tokenSecret.length < 32) {
 if (process.env.NODE_ENV === "production" && allowedWebOrigins.length === 0) {
   throw new Error("WEB_ORIGIN must be set in production.");
 }
-if (process.env.MONGODB_URI) {
-  mongoose.connect(process.env.MONGODB_URI).catch((error) => console.error("MongoDB connection failed:", error.message));
-} else {
-  console.warn("MONGODB_URI is not set; saved tracks are disabled.");
+if (process.env.NODE_ENV === "production" && !process.env.MONGODB_URI) {
+  throw new Error("MONGODB_URI must be set in production.");
 }
-app.listen(port, () => console.log(`Moodwave server listening at http://localhost:${port}`));
+
+async function startServer() {
+  if (process.env.MONGODB_URI) {
+    try {
+      await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 10000 });
+      console.log("MongoDB connected.");
+    } catch (error) {
+      if (process.env.NODE_ENV === "production") throw error;
+      console.error("MongoDB connection failed; account features are unavailable:", error.message);
+    }
+  } else {
+    console.warn("MONGODB_URI is not set; saved tracks are disabled.");
+  }
+  app.listen(port, () => console.log(`Moodwave server listening at http://localhost:${port}`));
+}
+
+startServer().catch((error) => {
+  console.error("Server startup failed:", error.message);
+  process.exitCode = 1;
+});
