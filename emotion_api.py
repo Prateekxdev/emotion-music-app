@@ -1,10 +1,15 @@
 """HTTP adapter for the existing emotion model and music recommendation logic."""
 
 import json
+import logging
+import re
+from functools import partial
 from pathlib import Path
+from urllib.parse import quote
 
 import cv2
 import numpy as np
+import requests
 import tensorflow as tf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +18,7 @@ from ytmusicapi import YTMusic
 ROOT = Path(__file__).resolve().parent
 MODEL_PATH = ROOT / "emotion_model.h5"
 LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+PIXEL_SCALE = 1.0 / 255.0
 MOOD_QUERY = {
     "happy": "upbeat pop songs", "sad": "soft acoustic songs", "angry": "rock songs",
     "neutral": "lofi chill songs", "surprise": "energetic dance songs",
@@ -46,6 +52,7 @@ app.add_middleware(
 )
 _model = None
 _ytmusic = None
+logger = logging.getLogger("moodwave.emotion")
 
 
 def get_model():
@@ -57,12 +64,26 @@ def get_model():
     return _model
 
 
+def warm_model():
+    try:
+        get_model()
+    except Exception:
+        logger.exception("Emotion model could not be loaded during startup")
+
+
+app.add_event_handler("startup", warm_model)
+
+
 def get_ytmusic():
     global _ytmusic
     if _ytmusic is None:
         browser_auth = ROOT / "browser.json"
         try:
-            _ytmusic = YTMusic(str(browser_auth)) if browser_auth.exists() else YTMusic()
+            session = requests.Session()
+            # Bound provider latency so an unavailable music endpoint falls
+            # back to playable search links instead of timing out the app.
+            session.request = partial(session.request, timeout=(3, 5))
+            _ytmusic = YTMusic(str(browser_auth), requests_session=session) if browser_auth.exists() else YTMusic(requests_session=session)
         except Exception:
             _ytmusic = False
     return None if _ytmusic is False else _ytmusic
@@ -72,8 +93,11 @@ def classify(image_bytes):
     decoded = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
     if decoded is None:
         raise ValueError("The uploaded image could not be decoded.")
+    if decoded.shape[0] * decoded.shape[1] > 40_000_000:
+        raise ValueError("The image dimensions are too large. Choose a smaller photo.")
     rgb = cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)
-    batch = np.expand_dims(cv2.resize(rgb, (224, 224)).astype(np.float32) / 255.0, 0)
+    # Must match train_model.py so the bundled model sees the same input range.
+    batch = np.expand_dims(cv2.resize(rgb, (224, 224)).astype(np.float32) * PIXEL_SCALE, 0)
     probabilities = np.asarray(get_model().predict(batch, verbose=0))[0]
     if probabilities.size != len(LABELS):
         raise ValueError("The model output does not match the seven emotion labels.")
@@ -81,7 +105,28 @@ def classify(image_bytes):
     return LABELS[index], float(probabilities[index])
 
 
-def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=None):
+def feedback_score(candidate, liked_tracks, disliked_tracks):
+    """Rank candidates from recent local likes/dislikes; this is not model retraining."""
+    def words(track):
+        text = f"{track.get('title', '')} {track.get('artist', '')}".lower()
+        return set(re.findall(r"[a-z0-9]+", text)) - {"the", "and", "a", "of", "to", "by", "in"}
+
+    candidate_words = words(candidate)
+    candidate_artist = candidate.get("artist", "").strip().casefold()
+    score = 0.0
+    for examples, direction in ((liked_tracks, 1.0), (disliked_tracks, -1.0)):
+        for position, example in enumerate(examples[:10]):
+            if not isinstance(example, dict):
+                continue
+            example_artist = example.get("artist", "").strip().casefold()
+            example_words = words(example)
+            overlap = len(candidate_words & example_words) / max(1, len(example_words))
+            recency_weight = 1.0 / (1 + position * 0.2)
+            score += direction * recency_weight * (2.5 * (candidate_artist == example_artist and bool(example_artist)) + overlap)
+    return score
+
+
+def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=None, disliked_tracks=None):
     query_parts = [MOOD_QUERY.get(emotion, MOOD_QUERY["neutral"])]
     if genre and genre != "Let the mood decide":
         query_parts.append(genre)
@@ -91,6 +136,7 @@ def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=
     if language_query:
         query_parts.append(language_query)
     liked_tracks = liked_tracks or []
+    disliked_tracks = disliked_tracks or []
     disliked_ids = set(disliked_ids or [])
     if liked_tracks:
         similar_to = ", ".join(
@@ -122,6 +168,7 @@ def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=
                 if len(tracks) == 8:
                     break
             if tracks:
+                tracks.sort(key=lambda track: feedback_score(track, liked_tracks, disliked_tracks), reverse=True)
                 return tracks, "youtube_music", query
         except Exception:
             pass
@@ -129,14 +176,25 @@ def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=
     # when the user explicitly asked for a different language.
     if language not in {"No preference", "English"}:
         return [], "unavailable", query
-    tracks = [{"title": title, "artist": artist, "url": None, "thumbnail": None}
-              for title, artist in FALLBACK.get(emotion, FALLBACK["neutral"])]
+    tracks = [
+        {
+            "title": title,
+            "artist": artist,
+            # An external search is still playable when the provider API is down.
+            "url": "https://music.youtube.com/search?q=" + quote(f"{title} {artist}"),
+            "thumbnail": None,
+            "isFallback": True,
+        }
+        for title, artist in FALLBACK.get(emotion, FALLBACK["neutral"])
+    ]
+    tracks.sort(key=lambda track: feedback_score(track, liked_tracks, disliked_tracks), reverse=True)
     return tracks, "built_in", query
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model_available": MODEL_PATH.exists()}
+    ready = _model is not None
+    return {"status": "ok" if ready else "degraded", "model_available": ready}
 
 
 @app.post("/detect")
@@ -154,7 +212,8 @@ async def detect_emotion(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"The emotion service is unavailable: {exc}") from exc
+        logger.exception("Emotion detection failed")
+        raise HTTPException(status_code=503, detail="Emotion analysis is temporarily unavailable. Please try again.") from exc
 
 
 @app.post("/recommendations")
@@ -165,6 +224,7 @@ def recommendations(
     language: str = Form("No preference"),
     liked_tracks: str = Form("[]"),
     disliked_ids: str = Form("[]"),
+    disliked_tracks: str = Form("[]"),
 ):
     if emotion not in LABELS:
         raise HTTPException(status_code=422, detail="Choose a valid detected mood.")
@@ -173,11 +233,14 @@ def recommendations(
     try:
         liked = json.loads(liked_tracks)
         disliked = json.loads(disliked_ids)
-        if not isinstance(liked, list) or not isinstance(disliked, list):
+        disliked_examples = json.loads(disliked_tracks)
+        if not isinstance(liked, list) or not isinstance(disliked, list) or not isinstance(disliked_examples, list):
             raise ValueError("Feedback data must be lists.")
+        if not all(isinstance(item, dict) for item in liked + disliked_examples):
+            raise ValueError("Feedback examples must be objects.")
         disliked = [item for item in disliked if isinstance(item, str)]
-        tracks, source, query = find_tracks(emotion, genre, goal, language, liked, disliked)
-        return {"emotion": emotion, "tracks": tracks, "source": source, "query": query, "language": language}
+        tracks, source, query = find_tracks(emotion, genre, goal, language, liked, disliked, disliked_examples)
+        return {"emotion": emotion, "tracks": tracks, "source": source, "query": query, "language": language, "personalized": bool(liked or disliked_examples)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Feedback data was malformed.") from exc
     except Exception as exc:

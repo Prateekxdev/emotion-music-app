@@ -185,7 +185,10 @@ if photo is not None:
         if st.session_state.get("photo_key") != photo_key:
             st.session_state.emotion_result = predict_emotion(photo_bytes, emotion_model)
             st.session_state.photo_key = photo_key
-        emotion, confidence = st.session_state.emotion_result
+        result = st.session_state.emotion_result
+        if result is None:
+            raise ValueError("The emotion could not be determined. Please take another photo.")
+        emotion, confidence = result
     except (ValueError, cv2.error) as exc:
         st.error(str(exc))
         st.stop()

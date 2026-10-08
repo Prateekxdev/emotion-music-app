@@ -9,6 +9,8 @@ TEST_DIR = PROJECT_DIR / "dataset" / "test"
 MODEL_PATH = PROJECT_DIR / "emotion_model.h5"
 IMAGE_SIZE = (224, 224)
 BATCH_SIZE = 32
+PIXEL_SCALE = 1.0 / 255.0
+EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 
 
 def main():
@@ -31,7 +33,14 @@ def main():
             f"missing from train: {sorted(test_classes - train_classes)}"
         )
 
-    class_names = sorted(train_classes)
+    if train_classes != set(EMOTION_LABELS):
+        raise ValueError(
+            "Training data must contain exactly these emotion folders: "
+            f"{', '.join(EMOTION_LABELS)}. Found: {', '.join(sorted(train_classes))}"
+        )
+
+    # Keep output neuron order identical to emotion_api.LABELS.
+    class_names = EMOTION_LABELS
     train_dataset = tf.keras.utils.image_dataset_from_directory(
         str(TRAIN_DIR),
         labels="inferred",
@@ -52,7 +61,7 @@ def main():
     )
 
     # Match the 0-1 pixel scaling used by the existing prediction pipeline.
-    scale_pixels = lambda images, labels: (tf.cast(images, tf.float32) / 255.0, labels)
+    scale_pixels = lambda images, labels: (tf.cast(images, tf.float32) * PIXEL_SCALE, labels)
     autotune = tf.data.AUTOTUNE
     train_dataset = train_dataset.map(scale_pixels, num_parallel_calls=autotune).prefetch(autotune)
     test_dataset = test_dataset.map(scale_pixels, num_parallel_calls=autotune).prefetch(autotune)
