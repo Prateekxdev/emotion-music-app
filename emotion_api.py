@@ -1,5 +1,6 @@
 """HTTP adapter for the existing emotion model and music recommendation logic."""
 
+import json
 from pathlib import Path
 
 import cv2
@@ -18,6 +19,14 @@ MOOD_QUERY = {
     "fear": "calm ambient songs", "disgust": "alternative songs",
 }
 GOAL_QUERY = {"Match my mood": "", "Lift my mood": "uplifting feel good", "Help me relax": "calm relaxing"}
+LANGUAGE_QUERY = {
+    "No preference": "", "English": "English", "Hindi": "Hindi", "Tamil": "Tamil",
+    "Telugu": "Telugu", "Kannada": "Kannada", "Malayalam": "Malayalam",
+    "Punjabi": "Punjabi", "Bengali": "Bengali", "Marathi": "Marathi",
+    "Gujarati": "Gujarati", "Urdu": "Urdu", "Korean": "Korean",
+    "Japanese": "Japanese", "Spanish": "Spanish", "French": "French",
+    "Arabic": "Arabic", "Instrumental / no vocals": "instrumental no vocals",
+}
 FALLBACK = {
     "happy": [("Good as Hell", "Lizzo"), ("Levitating", "Dua Lipa"), ("Flowers", "Miley Cyrus"), ("Can't Stop the Feeling!", "Justin Timberlake"), ("Firework", "Katy Perry")],
     "sad": [("Someone Like You", "Adele"), ("All I Want", "Kodaline"), ("Say You Won't Let Go", "James Arthur"), ("The Night We Met", "Lord Huron"), ("Perfect", "Ed Sheeran")],
@@ -72,12 +81,25 @@ def classify(image_bytes):
     return LABELS[index], float(probabilities[index])
 
 
-def find_tracks(emotion, genre, goal):
+def find_tracks(emotion, genre, goal, language, liked_tracks=None, disliked_ids=None):
     query_parts = [MOOD_QUERY.get(emotion, MOOD_QUERY["neutral"])]
     if genre and genre != "Let the mood decide":
         query_parts.append(genre)
     if goal in GOAL_QUERY and GOAL_QUERY[goal]:
         query_parts.append(GOAL_QUERY[goal])
+    language_query = LANGUAGE_QUERY.get(language, "")
+    if language_query:
+        query_parts.append(language_query)
+    liked_tracks = liked_tracks or []
+    disliked_ids = set(disliked_ids or [])
+    if liked_tracks:
+        similar_to = ", ".join(
+            f"{track.get('title', '')} by {track.get('artist', '')}"
+            for track in liked_tracks[:3]
+            if isinstance(track, dict) and (track.get("title") or track.get("artist"))
+        )
+        if similar_to:
+            query_parts.append(f"similar to {similar_to}")
     query = " ".join(query_parts + ["songs"])
     client = get_ytmusic()
     if client:
@@ -87,10 +109,11 @@ def find_tracks(emotion, genre, goal):
             for item in results:
                 video_id = item.get("videoId")
                 artists = item.get("artists") or []
-                if not video_id or video_id in seen or not item.get("title"):
+                if not video_id or video_id in seen or video_id in disliked_ids or not item.get("title"):
                     continue
                 seen.add(video_id)
                 tracks.append({
+                    "videoId": video_id,
                     "title": item["title"],
                     "artist": artists[0].get("name", "Unknown artist") if artists else "Unknown artist",
                     "url": f"https://music.youtube.com/watch?v={video_id}",
@@ -102,6 +125,10 @@ def find_tracks(emotion, genre, goal):
                 return tracks, "youtube_music", query
         except Exception:
             pass
+    # Built-in songs are English-language tracks. Do not quietly return them
+    # when the user explicitly asked for a different language.
+    if language not in {"No preference", "English"}:
+        return [], "unavailable", query
     tracks = [{"title": title, "artist": artist, "url": None, "thumbnail": None}
               for title, artist in FALLBACK.get(emotion, FALLBACK["neutral"])]
     return tracks, "built_in", query
@@ -112,11 +139,9 @@ def health():
     return {"status": "ok", "model_available": MODEL_PATH.exists()}
 
 
-@app.post("/recommendations")
-async def recommendations(
+@app.post("/detect")
+async def detect_emotion(
     photo: UploadFile = File(...),
-    genre: str = Form("Let the mood decide"),
-    goal: str = Form("Match my mood"),
 ):
     if photo.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(status_code=415, detail="Upload a JPG, PNG, or WebP photo.")
@@ -125,9 +150,35 @@ async def recommendations(
         raise HTTPException(status_code=413, detail="Photo must be under 10 MB.")
     try:
         emotion, confidence = classify(image)
-        tracks, source, query = find_tracks(emotion, genre, goal)
-        return {"emotion": emotion, "confidence": confidence, "tracks": tracks, "source": source, "query": query}
+        return {"emotion": emotion, "confidence": confidence}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"The emotion service is unavailable: {exc}") from exc
+
+
+@app.post("/recommendations")
+def recommendations(
+    emotion: str = Form(...),
+    genre: str = Form("Let the mood decide"),
+    goal: str = Form("Match my mood"),
+    language: str = Form("No preference"),
+    liked_tracks: str = Form("[]"),
+    disliked_ids: str = Form("[]"),
+):
+    if emotion not in LABELS:
+        raise HTTPException(status_code=422, detail="Choose a valid detected mood.")
+    if language not in LANGUAGE_QUERY:
+        raise HTTPException(status_code=422, detail="Choose a supported language preference.")
+    try:
+        liked = json.loads(liked_tracks)
+        disliked = json.loads(disliked_ids)
+        if not isinstance(liked, list) or not isinstance(disliked, list):
+            raise ValueError("Feedback data must be lists.")
+        disliked = [item for item in disliked if isinstance(item, str)]
+        tracks, source, query = find_tracks(emotion, genre, goal, language, liked, disliked)
+        return {"emotion": emotion, "tracks": tracks, "source": source, "query": query, "language": language}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Feedback data was malformed.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Music search is unavailable: {exc}") from exc

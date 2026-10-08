@@ -30,18 +30,34 @@ app.get("/api/health", async (_req, res) => {
   res.json({ status: "ok", python, mongo: mongoose.connection.readyState === 1 });
 });
 
-app.post("/api/recommendations", upload.single("photo"), async (req, res) => {
+app.post("/api/detect", upload.single("photo"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "Choose a photo first." });
   const form = new FormData();
   form.append("photo", new Blob([req.file.buffer], { type: req.file.mimetype }), req.file.originalname || "mood.jpg");
-  form.append("genre", String(req.body.genre || "Let the mood decide"));
-  form.append("goal", String(req.body.goal || "Match my mood"));
   try {
-    const response = await fetch(`${pythonApi}/recommendations`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const response = await fetch(`${pythonApi}/detect`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const payload = await response.json();
     res.status(response.status).json(payload);
   } catch (error) {
     res.status(503).json({ error: "Could not reach the Python emotion service. Start it on port 8000 and retry." });
+  }
+});
+
+app.post("/api/recommendations", async (req, res) => {
+  const { emotion, genre, goal, language, likedTracks = [], dislikedIds = [] } = req.body || {};
+  const form = new FormData();
+  form.append("emotion", String(emotion || ""));
+  form.append("genre", String(genre || "Let the mood decide"));
+  form.append("goal", String(goal || "Match my mood"));
+  form.append("language", String(language || "No preference"));
+  form.append("liked_tracks", JSON.stringify(Array.isArray(likedTracks) ? likedTracks.slice(0, 5) : []));
+  form.append("disliked_ids", JSON.stringify(Array.isArray(dislikedIds) ? dislikedIds.slice(0, 50) : []));
+  try {
+    const response = await fetch(`${pythonApi}/recommendations`, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+    const payload = await response.json();
+    res.status(response.status).json(payload);
+  } catch {
+    res.status(503).json({ error: "Could not reach the Python music service. Check that it is running on port 8000." });
   }
 });
 
