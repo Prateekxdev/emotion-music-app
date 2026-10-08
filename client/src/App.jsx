@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AudioLines, Bookmark, Camera, ChevronDown, Disc3, ExternalLink, Heart, Headphones, History as HistoryIcon, ListMusic, LoaderCircle, LogIn, LogOut, Moon, Music2, Plus, Radio, Sparkles, Sun, Trash2, Upload, Waves, X } from "lucide-react";
+import { AudioLines, Bookmark, Camera, ChevronDown, Disc3, ExternalLink, Heart, Headphones, History as HistoryIcon, ListMusic, LoaderCircle, LogIn, LogOut, Moon, Music2, Plus, Radio, ShieldCheck, Sparkles, Sun, Trash2, Upload, Waves, X } from "lucide-react";
 import TrackCard from "./components/TrackCard.jsx";
 import AccountDialog from "./components/AccountDialog.jsx";
 import TrackFilters from "./components/TrackFilters.jsx";
@@ -22,7 +22,31 @@ const sampleTracks = [["Golden", "Harry Styles"], ["Sunflower", "Post Malone & S
   url: `https://music.youtube.com/search?q=${encodeURIComponent(`${title} ${artist}`)}`,
 }));
 
+function EntryScreen() {
+  return <main className="entry-screen" role="status" aria-label="Loading Moodwave" aria-busy="true">
+    <img src="/moodwave-logo.png" alt="Moodwave music logo" decoding="async" />
+    <span className="entry-loading" aria-hidden="true" />
+  </main>;
+}
+
+function MoodChoices({ value, onChange, label, className = "" }) {
+  return <div className={`field mood-choice-field ${className}`}>
+    <span>{label}</span>
+    <div className="mood-choice-grid" role="group" aria-label={label}>
+      {emotions.map((emotion) => <button
+        className={`mood-choice ${value === emotion ? "selected" : ""}`}
+        data-mood={emotion}
+        key={emotion}
+        type="button"
+        aria-pressed={value === emotion}
+        onClick={() => onChange(emotion)}
+      >{emotion === "neutral" ? "Calm" : emotion[0].toUpperCase() + emotion.slice(1)}</button>)}
+    </div>
+  </div>;
+}
+
 export default function App() {
+  const [entryLoading, setEntryLoading] = useState(true);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -42,6 +66,7 @@ export default function App() {
   const [favoritesError, setFavoritesError] = useState("");
   const [serviceHealth, setServiceHealth] = useState({ python: null, mongo: null });
   const [activeTab, setActiveTab] = useState("mix");
+  const [historyActive, setHistoryActive] = useState(false);
   const [history, setHistory] = useState(() => {
     const stored = readStored("moodwave_history", []);
     return Array.isArray(stored) ? stored.slice(0, 20) : [];
@@ -69,6 +94,11 @@ export default function App() {
   const [filterLanguage, setFilterLanguage] = useState("any");
   const playerCloseRef = useRef(null);
   const previousFocusRef = useRef(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEntryLoading(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -125,6 +155,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#211d29" : "#f5f4f0");
     writeStored("moodwave_theme", theme);
   }, [theme]);
 
@@ -379,14 +410,15 @@ export default function App() {
 
   const visibleTracks = activeTab === "mix" ? result?.tracks || [] : favorites;
 
-  return <div className="app-shell" data-theme={theme} data-mood={mood || "neutral"}>
+  return <>
+  <div className="app-shell" data-theme={theme} data-mood={mood || "neutral"}>
     <aside className="sidebar">
       <a className="brand" href="#top" aria-label="Moodwave home"><span className="brand-mark"><Waves size={21}/></span><span>moodwave<span className="brand-dot">.</span></span></a>
       <div className="side-label">YOUR SPACE</div>
-      <button className={`side-link ${activeTab === "mix" ? "selected" : ""}`} onClick={() => setActiveTab("mix")}><AudioLines size={18}/> Discover <span className="side-active"/></button>
-      <button className={`side-link ${activeTab === "saved" ? "selected" : ""}`} onClick={() => setActiveTab("saved")}><Bookmark size={18}/> Saved tracks {favorites.length > 0 && <span className="count-pill">{favorites.length}</span>}</button>
-      <button className={`side-link ${activeTab === "playlists" ? "selected" : ""}`} onClick={() => setActiveTab("playlists")}><ListMusic size={18}/> Playlists</button>
-      <button className="side-link history-link" onClick={() => { setActiveTab("mix"); setTimeout(() => document.getElementById("listening-history")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 0); }}><HistoryIcon size={18}/> Listening history</button>
+      <button className={`side-link ${activeTab === "mix" ? "selected" : ""}`} onClick={() => { setActiveTab("mix"); setHistoryActive(false); }}><AudioLines size={18}/> Discover <span className="side-active"/></button>
+      <button className={`side-link ${activeTab === "saved" ? "selected" : ""}`} onClick={() => { setActiveTab("saved"); setHistoryActive(false); }}><Bookmark size={18}/> Saved tracks {favorites.length > 0 && <span className="count-pill">{favorites.length}</span>}</button>
+      <button className={`side-link ${activeTab === "playlists" ? "selected" : ""}`} onClick={() => { setActiveTab("playlists"); setHistoryActive(false); }}><ListMusic size={18}/> Playlists</button>
+      <button className="side-link history-link" onClick={() => { setActiveTab("mix"); setHistoryActive(true); setTimeout(() => document.getElementById("listening-history")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 0); }}><HistoryIcon size={18}/> Listening history</button>
       <div className="sidebar-note"><div className="note-icon"><Sparkles size={16}/></div><strong>Music meets mood.</strong><p>A small check-in can change the whole soundtrack.</p></div>
       <div className="sidebar-bottom"><span className={`live-dot ${serviceHealth.mongo ? "" : "status-muted"}`}/> {serviceHealth.mongo ? "Library connected" : serviceHealth.mongo === null ? "Checking library" : "Library offline"}<span className="version">v1.0</span></div>
     </aside>
@@ -394,22 +426,23 @@ export default function App() {
     <main id="top" className="main-content">
       <header className="topbar"><div className="breadcrumb"><span>YOUR LISTENING SPACE</span><span className="crumb-divider">/</span><b>{activeTab === "mix" ? "Discover" : activeTab === "saved" ? "Saved tracks" : "Playlists"}</b></div><div className="top-right"><span className={`status-dot ${serviceHealth.python === false || serviceHealth.model === false ? "service-offline" : ""}`} aria-hidden="true"/><span aria-live="polite">{serviceHealth.python === null ? "Checking music service" : !serviceHealth.python ? "Music service offline" : !serviceHealth.model ? "Photo detection unavailable" : "Mood and music online"}</span><button className="theme-toggle" type="button" onClick={() => setTheme((current) => current === "light" ? "dark" : "light")} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`} title={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>{theme === "light" ? <Moon size={15}/> : <Sun size={15}/>}<span>{theme === "light" ? "Dark" : "Light"}</span></button>{account ? <><span className="account-email">{account.email}</span><button className="account-action" onClick={signOut}><LogOut size={14}/> Sign out</button></> : <button className="account-action" onClick={() => setAccountOpen(true)}><LogIn size={14}/> Sign in</button>}</div></header>
 
-      <section className="welcome-row"><div><div className="overline"><span className="overline-line"/> A SOUNDTRACK FOR RIGHT NOW</div><h1>How are you <span>feeling?</span></h1><p className="intro">Check in with yourself. We’ll find the songs that meet you there.</p></div><div className="hero-disc"><div className="disc-rings"><span/><span/><span/><i><Music2 size={22}/></i></div><div className="disc-spark spark-one">✦</div><div className="disc-spark spark-two">✧</div></div></section>
+      <section className="welcome-row"><div><div className="overline"><span className="overline-line"/> A SOUNDTRACK FOR RIGHT NOW</div><h1>How are you <span>feeling?</span></h1><p className="intro">Pick a mood to start—no photo needed. A photo check-in is optional.</p></div><div className="hero-disc"><div className="disc-rings"><span/><span/><span/><i><Music2 size={22}/></i></div><div className="disc-spark spark-one">✦</div><div className="disc-spark spark-two">✧</div></div></section>
       {authNotice && <div className="auth-notice" role="status">{authNotice}<button onClick={() => setAuthNotice("")} aria-label="Dismiss message"><X size={14}/></button></div>}
 
       {activeTab === "mix" ? <><div className="workspace-grid">
         <section className="checkin-card panel">
-          <div className="card-heading"><div><span className="step-tag">01 / MOOD CHECK-IN</span><h2>Read the room</h2><p>Share a quick photo for an emotion estimate.</p></div><div className="heading-icon"><Camera size={19}/></div></div>
+          <div className="card-heading"><div><span className="step-tag">OPTIONAL PHOTO CHECK-IN</span><h2>Read the room</h2><p>Prefer a suggestion? A photo can estimate your mood.</p></div><div className="heading-icon"><Camera size={19}/></div></div>
           <form onSubmit={detectMood}>
             {cameraOpen ? <div className="camera-live"><video ref={videoRef} autoPlay muted playsInline/><div className="camera-controls"><span><span className="camera-live-dot"/> CAMERA ON</span><button type="button" onClick={capturePhoto}><Camera size={15}/> Capture photo</button><button type="button" className="camera-cancel" onClick={closeCamera}>Cancel</button></div></div> : <>
               <label className={`dropzone ${preview ? "has-preview" : ""}`}>
                 {preview ? <><img src={preview} alt="Your selected portrait"/><span className="photo-change"><Camera size={14}/> Change photo</span></> : <><span className="upload-icon"><Upload size={21}/></span><strong>Choose a photo, or open the camera</strong><span>JPG, PNG or WebP · up to 10 MB</span><em>Browse files</em></>}
                 <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { choosePhoto(event.target.files?.[0]); event.target.value = ""; }}/>
               </label>
+              <div className="privacy-note"><ShieldCheck size={15}/><span><strong>Private by design.</strong> Photos are analyzed for mood and never stored.</span></div>
               <div className="camera-launch-row"><span>For the full mood check-in</span><button type="button" onClick={openCamera}><Camera size={15}/> Open camera</button></div>
             </>}
+            {cameraOpen && <div className="privacy-note"><ShieldCheck size={15}/><span><strong>Private by design.</strong> Photos are analyzed for mood and never stored.</span></div>}
             <canvas ref={canvasRef} className="capture-canvas" aria-hidden="true"/>
-            <div className="privacy-note"><span className="privacy-lock">privacy</span> This photo is analyzed for your mood and is not stored by the app.</div>
             <button className="primary-button" disabled={busy || !file}>{busy ? <><LoaderCircle className="spin" size={18}/> Reading your mood...</> : <><Sparkles size={17}/> {moodResult ? "Detect my mood again" : "Detect my mood"} <span>→</span></>}</button>
           </form>
           {error && <div className="error-banner" role="alert"><span>!</span>{error}<button onClick={() => setError("")} aria-label="Dismiss error"><X size={15}/></button></div>}
@@ -421,7 +454,7 @@ export default function App() {
           {moodResult ? <>
             <div className="mood-summary"><div className="mood-orb"><Waves size={22}/></div><div><span className="mood-label">{moodResult.manual ? "YOUR MOOD" : "DETECTED MOOD"}</span><strong>{mood}</strong><small>{copy[0]}</small></div>{!moodResult.manual && <div className="confidence"><span>MODEL CONFIDENCE</span><b>{Math.round(moodResult.confidence * 100)}%</b></div>}</div>
             {!moodResult.manual && moodResult.confidence < 0.5 && <div className="confidence-hint">The model is unsure. Choose the mood that feels right to you.</div>}
-            <label className="field mood-override"><span>USE THIS MOOD FOR MUSIC</span><div className="select-wrap"><Waves size={16}/><select value={mood} onChange={(event) => { setSelectedMood(event.target.value); setResult(null); }}>{emotions.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select><ChevronDown size={15}/></div></label>
+            <MoodChoices className="mood-override" label="USE THIS MOOD FOR MUSIC" value={mood} onChange={(value) => { setSelectedMood(value); setResult(null); }}/>
             <div className="language-preferences">
               <div className="preference-heading"><span className="step-tag">03 / PERSONALISE YOUR MIX</span><span>Choose how you want to hear it</span></div>
               <label className="field language-field"><span>SONG LANGUAGE</span><div className="select-wrap"><span className="language-glyph">文</span><select value={language} onChange={(event) => { setLanguage(event.target.value); setResult(null); }}>{languages.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={15}/></div></label>
@@ -435,7 +468,7 @@ export default function App() {
               {!account && <button className="account-nudge" onClick={() => setAccountOpen(true)}>Sign in to save songs, create playlists, and sync feedback</button>}
               <section className="taste-profile"><div><span className="step-tag">YOUR FEEDBACK PROFILE</span><strong>{likedCount + dislikedCount ? "Your next mix is learning your taste" : "Teach your next mix what you like"}</strong><p>{likedCount} liked · {dislikedCount} skipped <span>{account ? "Feedback syncs to your account." : "Sign in to sync feedback across devices."}</span></p></div>{likedCount + dislikedCount > 0 && <button type="button" onClick={() => setFeedback({})}>Clear feedback</button>}</section>
             </> : <div className="no-tracks"><Music2 size={18}/><span>{language === "No preference" ? "No matches came back this time. Try another language or style." : `No ${language} tracks came back this time. Try another language or style.`}</span></div>)}
-          </> : <div className="empty-mix"><div className="empty-art"><div className="empty-vinyl"><span/></div><span className="empty-note note-a">♫</span><span className="empty-note note-b">♫</span></div><strong>Your next favorite is out there.</strong><p>Take a mood check-in, or choose how you feel to get a mix without sharing a photo.</p><div className="manual-mood-start"><label className="field"><span>CHOOSE YOUR MOOD</span><div className="select-wrap"><Waves size={16}/><select value={manualMood} onChange={(event) => setManualMood(event.target.value)}><option value="" disabled>Choose a mood</option>{emotions.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}</select><ChevronDown size={15}/></div></label><button className="find-songs-button" type="button" disabled={!manualMood} onClick={() => { setSelectedMood(manualMood); setMoodResult({ emotion: manualMood, manual: true }); }}><Sparkles size={15}/> Continue with this mood <span>→</span></button></div><button className="sample-mix-button" type="button" onClick={showSampleMix}><AudioLines size={15}/> Preview a sample mix</button><div className="empty-tags"><span><Sparkles size={13}/> Personalised</span><span><ExternalLink size={13}/> Ready to play</span></div></div>}
+          </> : <div className="empty-mix"><div className="empty-art"><div className="empty-vinyl"><span/></div><span className="empty-note note-a">♫</span><span className="empty-note note-b">♫</span></div><strong>Your next favorite is out there.</strong><p>Choose a mood to build a mix—no photo required.</p><div className="manual-mood-start"><MoodChoices label="CHOOSE YOUR MOOD" value={manualMood} onChange={setManualMood}/><button className="find-songs-button" type="button" disabled={!manualMood} onClick={() => { setSelectedMood(manualMood); setMoodResult({ emotion: manualMood, manual: true }); }}><Sparkles size={15}/> Continue with this mood <span>→</span></button></div><button className="sample-mix-button" type="button" onClick={showSampleMix}><AudioLines size={15}/> Preview a sample mix</button><div className="empty-tags"><span><Sparkles size={13}/> Personalised</span><span><ExternalLink size={13}/> Ready to play</span></div></div>}
         </section>
       </div>
       <section className="history-panel panel" id="listening-history">
@@ -444,12 +477,14 @@ export default function App() {
       </section>
       </> : activeTab === "playlists" ? <section className="saved-page panel"><div className="card-heading"><div><span className="step-tag">YOUR MIXTAPES</span><h2>Playlists</h2><p>Keep the songs you want to hear together.</p></div><div className="heading-icon"><ListMusic size={19}/></div></div>{account && <TrackFilters query={librarySearch} setQuery={setLibrarySearch} mood={filterMood} setMood={setFilterMood} language={filterLanguage} setLanguage={setFilterLanguage}/>} {!account ? <div className="saved-empty"><strong>Sign in to create private playlists</strong><span>Playlists sync to your account across devices.</span><button className="clear-history" onClick={() => setAccountOpen(true)}>Sign in or create account</button></div> : <><form className="create-playlist-form" onSubmit={createPlaylist}><input aria-label="New playlist name" placeholder="Name your playlist" maxLength={80} value={playlistName} onChange={(event) => setPlaylistName(event.target.value)}/><button className="clear-history" disabled={!playlistName.trim()}><Plus size={14}/> Create playlist</button></form>{playlists.length ? <div className="playlist-stack">{playlists.map((playlist) => <article className="playlist-card" key={playlist._id}><div className="playlist-title"><div><strong>{playlist.name}</strong><span>{playlist.tracks.length} songs</span></div><button className="clear-history" onClick={() => deletePlaylist(playlist)} aria-label={`Delete ${playlist.name}`}><Trash2 size={14}/> Delete</button></div>{playlist.tracks.filter(matchesLibraryFilters).length ? <div className="track-list">{playlist.tracks.filter(matchesLibraryFilters).map((track, index) => <div className="saved-row" key={track.url}><TrackCard track={track} index={index} onPlay={(item) => playTrack(item, playlist.tracks)}/><button className="remove-button" aria-label={`Remove ${track.title} from ${playlist.name}`} onClick={async () => { try { const updated = await api(`/api/playlists/${playlist._id}/tracks`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: track.url }) }); setPlaylists((items) => items.map((item) => item._id === updated._id ? updated : item)); } catch (err) { setError(err.message); } }}><X size={16}/></button></div>)}</div> : <p className="history-empty">{playlist.tracks.length ? "No songs match these filters." : "Add songs from your recommendations using the playlist selector."}</p>}</article>)}</div> : <div className="saved-empty"><ListMusic size={23}/><strong>No playlists yet</strong><span>Create one, then add songs from any recommendation.</span></div>}</>}</section> : <section className="saved-page panel"><div className="card-heading"><div><span className="step-tag">YOUR COLLECTION</span><h2>Saved tracks</h2><p>Your little shelf of songs to come back to.</p></div><div className="heading-icon"><Heart size={19}/></div></div>{account && <TrackFilters query={librarySearch} setQuery={setLibrarySearch} mood={filterMood} setMood={setFilterMood} language={filterLanguage} setLanguage={setFilterLanguage}/>} {!account ? <div className="saved-empty"><strong>Sign in for a private music library</strong><span>Saved songs are private to your account.</span><button className="clear-history" onClick={() => setAccountOpen(true)}>Sign in or create account</button></div> : favoritesStatus === "loading" ? <TrackSkeletonGrid count={4} rows/> : filteredFavorites.length ? <div className="track-list">{filteredFavorites.map((track, index) => <div className="saved-row" key={track._id}><TrackCard track={track} index={index} onPlay={(item) => playTrack(item, favorites)} playlists={playlists} onAddToPlaylist={addToPlaylist}/><button className="remove-button" onClick={() => removeTrack(track)} aria-label={`Remove ${track.title}`}><X size={16}/></button></div>)}</div> : favoritesStatus === "unavailable" && serviceHealth.mongo ? <div className="saved-empty"><strong>Couldn’t load your library</strong><span>{favoritesError}</span><button className="clear-history" onClick={refreshFavorites}>Try again</button></div> : <div className="saved-empty"><Bookmark size={25}/><strong>{favorites.length ? "No saved songs match these filters" : "No saved tracks yet"}</strong><span>Your saved songs will live here.</span></div>}<section className="privacy-settings"><span className="step-tag">PRIVACY AND DATA</span><h3>Your Moodwave data</h3><p>Photos are processed for mood detection and aren’t stored. You can clear your local activity or permanently remove your account and its playlists, saved songs, feedback, and history.</p><div className="privacy-actions"><button className="clear-history" onClick={() => { setFeedback({}); setHistory([]); writeStored("moodwave_feedback", {}); writeStored("moodwave_history", []); setPrivacyMessage("Feedback and listening history cleared."); }}>Clear feedback and history</button>{account && <button className="delete-account-button" onClick={deleteAccount}>Delete account and all data</button>}</div>{privacyMessage && <p className="privacy-message" role="status">{privacyMessage}</p>}</section></section>}
 
-      <nav className="mobile-nav" aria-label="Primary navigation"><button aria-current={activeTab === "mix" ? "page" : undefined} onClick={() => setActiveTab("mix")}><AudioLines size={18}/><span>Discover</span></button><button aria-current={activeTab === "saved" ? "page" : undefined} onClick={() => setActiveTab("saved")}><Bookmark size={18}/><span>Saved</span></button><button aria-current={activeTab === "playlists" ? "page" : undefined} onClick={() => setActiveTab("playlists")}><ListMusic size={18}/><span>Playlists</span></button><button onClick={() => { setActiveTab("mix"); window.setTimeout(() => document.getElementById("listening-history")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 0); }}><HistoryIcon size={18}/><span>History</span></button></nav>
+      <nav className="mobile-nav" aria-label="Primary navigation"><button aria-current={!historyActive && activeTab === "mix" ? "page" : undefined} onClick={() => { setActiveTab("mix"); setHistoryActive(false); }}><AudioLines size={18}/><span>Discover</span></button><button aria-current={activeTab === "saved" ? "page" : undefined} onClick={() => { setActiveTab("saved"); setHistoryActive(false); }}><Bookmark size={18}/><span>Saved</span></button><button aria-current={activeTab === "playlists" ? "page" : undefined} onClick={() => { setActiveTab("playlists"); setHistoryActive(false); }}><ListMusic size={18}/><span>Playlists</span></button><button aria-current={historyActive ? "location" : undefined} onClick={() => { setActiveTab("mix"); setHistoryActive(true); window.setTimeout(() => document.getElementById("listening-history")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 0); }}><HistoryIcon size={18}/><span>History</span></button></nav>
       <footer className="page-footer"><span>MOODWAVE <span className="footer-dot">●</span> MUSIC FOR YOUR MOMENT</span><span>Take what you need. Leave what you don’t.</span></footer>
     </main>
     {nowPlaying && <section className="mini-player" aria-label="Music player"><div className="mini-player-track"><span className="track-art player-art">{nowPlaying.thumbnail ? <img src={nowPlaying.thumbnail} alt=""/> : <Music2 size={20}/>}</span><div><strong>{nowPlaying.title}</strong><span>{nowPlaying.artist}</span><small className="player-mood">{nowPlaying.mood || mood || "Your mix"} · now playing</small></div></div>{getYoutubeId(nowPlaying.url) ? <iframe src={`https://www.youtube-nocookie.com/embed/${getYoutubeId(nowPlaying.url)}?autoplay=1&rel=0`} title={`Play ${nowPlaying.title}`} allow="autoplay; encrypted-media; picture-in-picture"/> : <a className="fallback-player-link" href={nowPlaying.url} target="_blank" rel="noreferrer">Open song search <ExternalLink size={14}/></a>}<div className="mini-player-controls"><button onClick={() => moveQueue(-1)} aria-label="Previous song" disabled={playbackQueue.length < 2}>‹</button><span>{queueIndex + 1} / {playbackQueue.length}</span><button onClick={() => moveQueue(1)} aria-label="Next song" disabled={playbackQueue.length < 2}>›</button><button onClick={() => setNowPlaying(null)} aria-label="Close player"><X size={17}/></button></div></section>}
     {accountOpen && <AccountDialog onClose={() => { setAccountOpen(false); setAuthInitialMode("login"); setAuthResetToken(""); }} onAuthenticated={acceptAccount} initialMode={authInitialMode} resetToken={authResetToken}/>}
-  </div>;
+  </div>
+  {entryLoading && <EntryScreen />}
+  </>;
 }
 
 function getYoutubeId(url) { try { const parsed = new URL(url); return parsed.hostname.includes("youtu.be") ? parsed.pathname.slice(1) : parsed.searchParams.get("v") || parsed.pathname.match(/\/embed\/([^/]+)/)?.[1] || null; } catch { return null; } }

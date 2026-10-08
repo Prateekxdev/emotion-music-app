@@ -6,6 +6,66 @@
     <meta name="theme-color" content="#101016" />
     <meta name="description" content="Music discovery tuned to your mood." />
     <title>Moodwave — music for your mood</title>
+    <link rel="preload" as="image" href="/moodwave-logo.png" fetchpriority="high" />
+    <style>
+      html, body, #root { min-height: 100%; margin: 0; }
+      body { min-width: 320px; background: #101016; }
+      .entry-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: grid;
+        place-items: center;
+        align-content: center;
+        gap: 30px;
+        background: rgba(16, 16, 22, 0.42);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+        color: #f4f1fa;
+        font-family: system-ui, sans-serif;
+      }
+      .entry-screen img {
+        display: block;
+        width: min(76vw, 360px);
+        height: auto;
+        animation: logo-arrive 700ms ease-out both;
+      }
+      .entry-loading {
+        width: 54px;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 3px;
+        background: rgba(255, 255, 255, 0.18);
+      }
+      .entry-loading::after {
+        content: "";
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #a88ae7, #62c9bf);
+        animation: loading-slide 1.2s ease-in-out infinite;
+      }
+      @keyframes logo-arrive {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes loading-slide {
+        from { transform: translateX(-110%); }
+        to { transform: translateX(250%); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .entry-screen img, .entry-loading::after { animation: none; }
+      }
+    </style>
   </head>
-  <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+  <body>
+    <div id="root">
+      <main class="entry-screen" role="status" aria-label="Loading Moodwave" aria-busy="true">
+        <img src="/moodwave-logo.png" alt="Moodwave music logo" />
+        <span class="entry-loading" aria-hidden="true"></span>
+      </main>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>

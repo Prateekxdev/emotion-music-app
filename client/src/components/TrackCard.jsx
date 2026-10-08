@@ -25,7 +25,7 @@ export default function TrackCard({
       >
         <span className="track-art" aria-hidden="true">
           {track.thumbnail ? (
-            <img src={track.thumbnail} alt="" loading="lazy"/>
+            <img src={track.thumbnail} alt="" loading="lazy" decoding="async"/>
           ) : (
             <span className={`fallback-art art-${index % 4}`}><Music2 size={20}/></span>
           )}

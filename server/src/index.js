@@ -398,7 +398,17 @@ app.use((error, _req, res, _next) => {
 app.use("/api", (_req, res) => res.status(404).json({ error: "API route not found." }));
 
 const clientDist = path.resolve(here, "../../client/dist");
-app.use(express.static(clientDist));
+app.use(express.static(clientDist, {
+  maxAge: "1d",
+  setHeaders(res, filePath) {
+    const fileName = path.basename(filePath);
+    if (fileName === "index.html") {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`) && /-[\w-]{8,}\.(?:js|css)$/.test(fileName)) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+  },
+}));
 app.get("*", (_req, res, next) => res.sendFile(path.join(clientDist, "index.html"), (error) => error && next()));
 
 if (process.env.MONGODB_URI) {

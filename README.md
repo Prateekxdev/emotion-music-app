@@ -61,7 +61,7 @@ Install Docker Desktop, copy `.env.example` to `.env`, replace `SESSION_SECRET` 
 docker compose up --build -d
 ```
 
-Open `http://localhost:5000`. Compose starts the web app, Python emotion API, and MongoDB with persistent storage. Put a TLS reverse proxy in front of the app for public deployments. Keep `.env` and database backups private. To stop the services, run `docker compose down`; the database volume remains. To remove it too, run `docker compose down -v`.
+Open `http://localhost:5000`. Compose starts the web app, Python emotion API, and MongoDB with persistent storage. The web server revalidates the HTML page and applies long-lived immutable caching to fingerprinted JavaScript and CSS bundles. Put a TLS reverse proxy in front of the app for public deployments. Keep `.env` and database backups private. To stop the services, run `docker compose down`; the database volume remains. To remove it too, run `docker compose down -v`.
 
 The existing Streamlit app can still be started separately with `python -m streamlit run musicrec.py`.
 

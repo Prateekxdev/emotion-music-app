@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Moodwave music note and heart mark</title>
+  <defs>
+    <linearGradient id="moodwave-gradient" x1="175" y1="184" x2="363" y2="329" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#542889" />
+      <stop offset="1" stop-color="#129B9A" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(-28 -10)" fill="url(#moodwave-gradient)">
+    <path d="M244 125h29v222h-29z" />
+    <path d="M270 126c55-11 95 5 97 40 2 34-26 61-74 79v-32c27-11 43-25 41-42-2-18-24-25-64-16z" />
+    <path d="M259 333c-24-29-65-15-64 18 1 28 40 57 65 75 25-18 64-47 65-75 1-33-40-47-66-18Z" />
+  </g>
+</svg>
