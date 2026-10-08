@@ -253,14 +253,14 @@ app.post("/api/recommendations", async (req, res) => {
   }
 });
 
-app.get("/api/favorites", async (_req, res) => {
-  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: "MongoDB is not connected." });
-  try { res.json(await SavedSong.find().sort({ createdAt: -1 }).limit(100).lean()); }
+app.get("/api/favorites", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
+  try { res.json(await SavedSong.find({ owner: req.userId }).sort({ createdAt: -1 }).limit(100).lean()); }
   catch { res.status(500).json({ error: "Could not load saved tracks." }); }
 });
 
-app.post("/api/favorites", async (req, res) => {
-  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: "MongoDB is not connected." });
+app.post("/api/favorites", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
   const { title, artist, url, thumbnail = "" } = req.body || {};
   const validTrackUrl = (() => {
     try {
@@ -272,15 +272,15 @@ app.post("/api/favorites", async (req, res) => {
     return res.status(400).json({ error: "A valid YouTube Music track is required." });
   }
   try {
-    const song = await SavedSong.findOneAndUpdate({ url }, { title, artist, url, thumbnail }, { upsert: true, new: true, runValidators: true });
+    const song = await SavedSong.findOneAndUpdate({ owner: req.userId, url }, { owner: req.userId, title, artist, url, thumbnail }, { upsert: true, new: true, runValidators: true });
     res.status(201).json(song);
   } catch { res.status(500).json({ error: "Could not save this track." }); }
 });
 
-app.delete("/api/favorites/:id", async (req, res) => {
-  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: "MongoDB is not connected." });
+app.delete("/api/favorites/:id", requireUser, async (req, res) => {
+  if (!mongoReady(res)) return;
   if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ error: "Invalid saved track." });
-  try { await SavedSong.findByIdAndDelete(req.params.id); res.status(204).end(); }
+  try { await SavedSong.findOneAndDelete({ _id: req.params.id, owner: req.userId }); res.status(204).end(); }
   catch { res.status(500).json({ error: "Could not remove this track." }); }
 });
 
