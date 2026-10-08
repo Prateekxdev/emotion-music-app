@@ -1,4 +1,6 @@
-browser.json
 .env
 dataset/
 emotion_model.h5
+browser.json
+.streamlit/secrets.toml
+__pycache__/
