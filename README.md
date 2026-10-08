@@ -6,9 +6,9 @@ Moodwave combines the existing TensorFlow emotion classifier with a React music 
 
 - Python 3.11 and the packages in `requirements.txt`
 - Node.js 20 or newer
-- MongoDB running locally, or a MongoDB Atlas connection string (optional; without it, recommendations still work but saving tracks is disabled)
+- MongoDB running locally, or a MongoDB Atlas connection string (required for accounts, playlists, saved tracks, feedback, and synced history)
 
-This demo does not include sign-in, so MongoDB saved tracks are shared by everyone using the same deployment. Add accounts before deploying it for multiple private users.
+Moodwave supports email/password accounts. Passwords are stored as scrypt hashes, and sessions use signed HTTP-only cookies. Each user's library and activity are scoped to their account. Use HTTPS and set a unique `SESSION_SECRET` before deployment.
 
 ## Run locally on Windows PowerShell
 
@@ -29,13 +29,13 @@ Install the React and Express dependencies. Use `npm.cmd` in PowerShell if the `
 npm.cmd install
 ```
 
-Configure MongoDB (optional):
+Configure MongoDB and account sessions:
 
 ```powershell
 Copy-Item server/.env.example server/.env
 ```
 
-Edit `server/.env` and set `MONGODB_URI` to your local database or Atlas connection string. Keep `.env` private.
+Edit `server/.env` and set `MONGODB_URI` to your local database or Atlas connection string. Replace `SESSION_SECRET` with a long random value. Account email verification and password recovery use the Resend email API: set `EMAIL_API_KEY`, a verified `EMAIL_FROM`, and the public `PUBLIC_APP_URL`. In local development, verification/reset links are shown directly in the account dialog if email credentials are empty. Keep `.env` private. Mood discovery still works without MongoDB, but account features are disabled.
 
 With `.venv` activated, start all three app services from the project root. Keeping the environment activated matters because the Python emotion service uses the active `python` command:
 
@@ -43,7 +43,25 @@ With `.venv` activated, start all three app services from the project root. Keep
 npm.cmd run dev
 ```
 
-Open the Vite URL printed in the terminal, usually `http://localhost:5173`. The React app calls Express on port 5000, which forwards photo analysis to FastAPI on port 8000. MongoDB is only needed for the saved tracks feature.
+Open the Vite URL printed in the terminal, usually `http://localhost:5173`. The React app calls Express on port 5000, which forwards photo analysis to FastAPI on port 8000. MongoDB stores account data and private libraries.
+
+## Features
+
+- Private accounts with saved tracks and personal playlists.
+- Feedback saved to your account and used to rank future mixes.
+- Recommendation explanations based on mood, preferences, and your feedback.
+- Mood mix and listening history, plus a persistent next/previous player queue.
+- Privacy controls to clear history and feedback or delete your account and its data.
+
+## Production deployment with Docker Compose
+
+Install Docker Desktop, copy `.env.example` to `.env`, replace `SESSION_SECRET` with a unique random secret, and configure the email provider values before enabling account registration in production. Then run:
+
+```powershell
+docker compose up --build -d
+```
+
+Open `http://localhost:5000`. Compose starts the web app, Python emotion API, and MongoDB with persistent storage. Put a TLS reverse proxy in front of the app for public deployments. Keep `.env` and database backups private. To stop the services, run `docker compose down`; the database volume remains. To remove it too, run `docker compose down -v`.
 
 The existing Streamlit app can still be started separately with `python -m streamlit run musicrec.py`.
 

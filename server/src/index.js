@@ -3,7 +3,7 @@ import express from "express";
 import multer from "multer";
 import mongoose from "mongoose";
 import path from "node:path";
-import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -30,6 +30,12 @@ app.use(express.json({ limit: "1mb" }));
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true, trim: true, maxlength: 254 },
   passwordHash: { type: String, required: true },
+  sessionVersion: { type: Number, default: 0 },
+  verifiedAt: { type: Date, default: null },
+  verificationHash: { type: String, default: "" },
+  verificationExpires: { type: Date, default: null },
+  resetHash: { type: String, default: "" },
+  resetExpires: { type: Date, default: null },
   feedback: { type: [mongoose.Schema.Types.Mixed], default: [] },
   history: { type: [mongoose.Schema.Types.Mixed], default: [] },
 }, { timestamps: true });
@@ -41,7 +47,10 @@ const songSchema = new mongoose.Schema({
   artist: { type: String, required: true, maxlength: 240 },
   url: { type: String, required: true, maxlength: 512 },
   thumbnail: { type: String, default: "", maxlength: 2048 },
+  mood: { type: String, default: "", maxlength: 24 },
+  language: { type: String, default: "", maxlength: 40 },
 }, { timestamps: true });
+songSchema.index({ owner: 1, url: 1 }, { unique: true });
 const SavedSong = mongoose.model("SavedSong", songSchema);
 
 const playlistSchema = new mongoose.Schema({
@@ -55,8 +64,8 @@ function cookieValue(req, name) {
   const part = (req.headers.cookie || "").split(";").map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
   return part ? decodeURIComponent(part.slice(name.length + 1)) : "";
 }
-function signSession(userId, expiresAt) {
-  const payload = Buffer.from(JSON.stringify({ sub: String(userId), exp: expiresAt })).toString("base64url");
+function signSession(user, expiresAt) {
+  const payload = Buffer.from(JSON.stringify({ sub: String(user._id), ver: user.sessionVersion || 0, exp: expiresAt })).toString("base64url");
   const signature = createHmac("sha256", tokenSecret).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }
@@ -70,13 +79,18 @@ function currentUser(req) {
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (!decoded.sub || decoded.exp < Date.now()) return null;
-    return decoded.sub;
+    return decoded;
   } catch { return null; }
 }
-function requireUser(req, res, next) {
-  const userId = currentUser(req);
-  if (!userId) return res.status(401).json({ error: "Sign in to use your personal library." });
-  req.userId = userId;
+async function requireUser(req, res, next) {
+  const session = currentUser(req);
+  if (!session) return res.status(401).json({ error: "Sign in to use your personal library." });
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ error: "Your account database is not available." });
+  try {
+    const user = await User.findById(session.sub).select("sessionVersion verifiedAt").lean();
+    if (!user || !user.verifiedAt || (user.sessionVersion || 0) !== session.ver) return res.status(401).json({ error: "Sign in to use your personal library." });
+  } catch { return res.status(503).json({ error: "Your account database is not available." }); }
+  req.userId = session.sub;
   next();
 }
 function mongoReady(res) {
@@ -86,14 +100,50 @@ function mongoReady(res) {
 }
 function setSession(res, user) {
   const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
-  res.cookie("moodwave_session", signSession(user._id, expiresAt), {
+  res.cookie("moodwave_session", signSession(user, expiresAt), {
     httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production",
     maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
   });
 }
 function publicUser(user) { return { id: String(user._id), email: user.email }; }
+function hashToken(token) { return createHash("sha256").update(token).digest("hex"); }
+function createOneTimeToken() { return randomBytes(32).toString("hex"); }
+function appUrl(pathAndQuery) { return `${(process.env.PUBLIC_APP_URL || "http://localhost:5173").replace(/\/$/, "")}${pathAndQuery}`; }
+async function sendEmail({ to, subject, text, html }) {
+  if (!process.env.EMAIL_API_KEY || !process.env.EMAIL_FROM) {
+    if (process.env.NODE_ENV === "production") throw new Error("Configure EMAIL_API_KEY and EMAIL_FROM to deliver account emails.");
+    return false;
+  }
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST", headers: { Authorization: `Bearer ${process.env.EMAIL_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to], subject, text, html }), signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error("Email provider rejected the message.");
+  return true;
+}
+function validMusicUrl(value, allowSearch = false) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" || parsed.hostname !== "music.youtube.com") return false;
+    if (parsed.pathname === "/watch") return /^[\w-]{11}$/.test(parsed.searchParams.get("v") || "");
+    return allowSearch && parsed.pathname === "/search" && Boolean(parsed.searchParams.get("q")) && parsed.searchParams.get("q").length <= 400;
+  } catch { return false; }
+}
 
-app.post("/api/auth/register", async (req, res) => {
+const authAttempts = new Map();
+function limitAuthAttempts(req, res, next) {
+  const key = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  let attempt = authAttempts.get(key);
+  if (!attempt || attempt.until < now) attempt = { count: 0, until: now + 15 * 60 * 1000 };
+  attempt.count += 1;
+  authAttempts.set(key, attempt);
+  if (authAttempts.size > 5000) for (const [ip, entry] of authAttempts) if (entry.until < now) authAttempts.delete(ip);
+  if (attempt.count > 20) return res.status(429).json({ error: "Too many account attempts. Try again in a few minutes." });
+  next();
+}
+
+app.post("/api/auth/register", limitAuthAttempts, async (req, res) => {
   if (!mongoReady(res)) return;
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -101,18 +151,27 @@ app.post("/api/auth/register", async (req, res) => {
     return res.status(400).json({ error: "Enter a valid email and a password of 10–128 characters." });
   }
   if (!tokenSecret) return res.status(503).json({ error: "Set SESSION_SECRET before enabling production sign-in." });
+  if (process.env.NODE_ENV === "production" && (!process.env.EMAIL_API_KEY || !process.env.EMAIL_FROM || !process.env.PUBLIC_APP_URL)) return res.status(503).json({ error: "Account email is not configured. Set EMAIL_API_KEY, EMAIL_FROM, and PUBLIC_APP_URL." });
   try {
     const salt = randomBytes(16).toString("hex");
     const derived = await scrypt(password, salt, 64);
-    const user = await User.create({ email, passwordHash: `${salt}:${derived.toString("hex")}` });
-    setSession(res, user);
-    res.status(201).json({ user: publicUser(user), feedback: [], history: [] });
+    const verificationToken = createOneTimeToken();
+    const existing = await User.findOne({ email });
+    if (existing?.verifiedAt) return res.status(409).json({ error: "An account with that email already exists." });
+    const user = existing || new User({ email });
+    user.passwordHash = `${salt}:${derived.toString("hex")}`;
+    user.verificationHash = hashToken(verificationToken);
+    user.verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save();
+    const verifyUrl = appUrl(`/?verify=${verificationToken}`);
+    const sent = await sendEmail({ to: email, subject: "Verify your Moodwave email", text: `Verify your Moodwave account: ${verifyUrl}`, html: `<p>Welcome to Moodwave.</p><p><a href="${verifyUrl}">Verify your email address</a>. This link expires in 24 hours.</p>` });
+    res.status(202).json({ emailVerificationRequired: true, message: "Check your email for a verification link.", ...(sent ? {} : { verificationUrl: verifyUrl }) });
   } catch (error) {
-    if (error.code === 11000) return res.status(409).json({ error: "An account with that email already exists." });
-    res.status(500).json({ error: "Could not create your account." });
+    console.error("Account registration email failed:", error.message);
+    res.status(503).json({ error: "We couldn't send the verification email. Try again shortly." });
   }
 });
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", limitAuthAttempts, async (req, res) => {
   if (!mongoReady(res)) return;
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -123,9 +182,53 @@ app.post("/api/auth/login", async (req, res) => {
     const derived = await scrypt(password, salt || "invalid", 64);
     const stored = Buffer.from(storedHash || "", "hex");
     if (!user || stored.length !== derived.length || !timingSafeEqual(stored, derived)) return res.status(401).json({ error: "Email or password is incorrect." });
+    if (!user.verifiedAt) return res.status(403).json({ error: "Verify your email before signing in. Create your account again to resend the link." });
     setSession(res, user);
     res.json({ user: publicUser(user), feedback: user.feedback, history: user.history });
   } catch { res.status(500).json({ error: "Could not sign in right now." }); }
+});
+app.post("/api/auth/verify", limitAuthAttempts, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const token = typeof req.body?.token === "string" ? req.body.token : "";
+  if (!/^[a-f0-9]{64}$/.test(token)) return res.status(400).json({ error: "That verification link is invalid." });
+  try {
+    const user = await User.findOneAndUpdate({ verificationHash: hashToken(token), verificationExpires: { $gt: new Date() }, verifiedAt: null }, { $set: { verifiedAt: new Date() }, $unset: { verificationHash: 1, verificationExpires: 1 } }, { new: true });
+    if (!user) return res.status(400).json({ error: "That verification link has expired or was already used. Create your account again to request a new one." });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Could not verify the email address." }); }
+});
+app.post("/api/auth/password/request", limitAuthAttempts, async (req, res) => {
+  if (!mongoReady(res)) return;
+  if (process.env.NODE_ENV === "production" && (!process.env.EMAIL_API_KEY || !process.env.EMAIL_FROM || !process.env.PUBLIC_APP_URL)) return res.status(503).json({ error: "Account email is not configured." });
+  const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ error: "Enter a valid email address." });
+  try {
+    const user = await User.findOne({ email, verifiedAt: { $ne: null } });
+    if (!user) return res.status(202).json({ message: "If a verified account exists, a reset link will be sent." });
+    const token = createOneTimeToken();
+    user.resetHash = hashToken(token);
+    user.resetExpires = new Date(Date.now() + 60 * 60 * 1000);
+    await user.save();
+    const resetUrl = appUrl(`/?reset=${token}`);
+    const sent = await sendEmail({ to: email, subject: "Reset your Moodwave password", text: `Reset your Moodwave password: ${resetUrl}`, html: `<p>We received a request to reset your Moodwave password.</p><p><a href="${resetUrl}">Choose a new password</a>. This link expires in one hour.</p><p>If you didn't ask for this, you can ignore this email.</p>` });
+    res.status(202).json({ message: "If a verified account exists, a reset link will be sent.", ...(sent ? {} : { resetUrl }) });
+  } catch (error) { console.error("Password reset email failed:", error.message); res.status(503).json({ error: "We couldn't send a reset email. Try again shortly." }); }
+});
+app.post("/api/auth/password/reset", limitAuthAttempts, async (req, res) => {
+  if (!mongoReady(res)) return;
+  const token = typeof req.body?.token === "string" ? req.body.token : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!/^[a-f0-9]{64}$/.test(token) || password.length < 10 || password.length > 128) return res.status(400).json({ error: "Use a valid reset link and a password of 10–128 characters." });
+  try {
+    const user = await User.findOne({ resetHash: hashToken(token), resetExpires: { $gt: new Date() }, verifiedAt: { $ne: null } });
+    if (!user) return res.status(400).json({ error: "That reset link has expired or was already used. Request another link." });
+    const salt = randomBytes(16).toString("hex");
+    const derived = await scrypt(password, salt, 64);
+    user.passwordHash = `${salt}:${derived.toString("hex")}`;
+    user.resetHash = ""; user.resetExpires = null; user.sessionVersion = (user.sessionVersion || 0) + 1;
+    await user.save();
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Could not reset the password." }); }
 });
 app.get("/api/auth/me", requireUser, async (req, res) => {
   if (!mongoReady(res)) return;
@@ -169,12 +272,12 @@ app.post("/api/playlists", requireUser, async (req, res) => {
 app.post("/api/playlists/:id/tracks", requireUser, async (req, res) => {
   if (!mongoReady(res)) return;
   const { track } = req.body || {};
-  if (!track || typeof track.title !== "string" || typeof track.artist !== "string" || typeof track.url !== "string" || !track.url.startsWith("https://music.youtube.com/")) return res.status(400).json({ error: "Choose a valid track to add." });
+  if (!track || typeof track.title !== "string" || typeof track.artist !== "string" || !validMusicUrl(track.url, true)) return res.status(400).json({ error: "Choose a valid track to add." });
   try {
     const playlist = await Playlist.findOne({ _id: req.params.id, owner: req.userId });
     if (!playlist) return res.status(404).json({ error: "Playlist not found." });
     if (playlist.tracks.length >= 500) return res.status(409).json({ error: "This playlist has reached its 500 track limit." });
-    if (!playlist.tracks.some((item) => item.url === track.url)) playlist.tracks.push({ title: track.title.slice(0, 240), artist: track.artist.slice(0, 240), url: track.url.slice(0, 512), thumbnail: String(track.thumbnail || "").slice(0, 2048) });
+    if (!playlist.tracks.some((item) => item.url === track.url)) playlist.tracks.push({ title: track.title.slice(0, 240), artist: track.artist.slice(0, 240), url: track.url.slice(0, 512), thumbnail: String(track.thumbnail || "").slice(0, 2048), mood: allowedMoods.has(track.mood) ? track.mood : "", language: allowedLanguages.has(track.language) ? track.language : "" });
     await playlist.save(); res.json(playlist);
   } catch { res.status(500).json({ error: "Could not update playlist." }); }
 });
@@ -261,18 +364,13 @@ app.get("/api/favorites", requireUser, async (req, res) => {
 
 app.post("/api/favorites", requireUser, async (req, res) => {
   if (!mongoReady(res)) return;
-  const { title, artist, url, thumbnail = "" } = req.body || {};
-  const validTrackUrl = (() => {
-    try {
-      const parsed = new URL(url);
-      return parsed.protocol === "https:" && parsed.hostname === "music.youtube.com" && parsed.pathname === "/watch" && /^[\w-]{11}$/.test(parsed.searchParams.get("v") || "");
-    } catch { return false; }
-  })();
+  const { title, artist, url, thumbnail = "", mood = "", language = "" } = req.body || {};
+  const validTrackUrl = validMusicUrl(url);
   if (typeof title !== "string" || !title.trim() || title.length > 240 || typeof artist !== "string" || !artist.trim() || artist.length > 240 || !validTrackUrl) {
     return res.status(400).json({ error: "A valid YouTube Music track is required." });
   }
   try {
-    const song = await SavedSong.findOneAndUpdate({ owner: req.userId, url }, { owner: req.userId, title, artist, url, thumbnail }, { upsert: true, new: true, runValidators: true });
+    const song = await SavedSong.findOneAndUpdate({ owner: req.userId, url }, { owner: req.userId, title, artist, url, thumbnail, mood, language }, { upsert: true, new: true, runValidators: true });
     res.status(201).json(song);
   } catch { res.status(500).json({ error: "Could not save this track." }); }
 });

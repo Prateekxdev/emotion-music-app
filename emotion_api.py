@@ -244,6 +244,16 @@ def recommendations(
             raise ValueError("Feedback examples must be objects.")
         disliked = [item for item in disliked if isinstance(item, str)]
         tracks, source, query = find_tracks(emotion, genre, goal, language, liked, disliked, disliked_examples)
+        for track in tracks:
+            taste_score = feedback_score(track, liked, disliked_examples)
+            if taste_score > 0:
+                track["reason"] = "Matches artists or songs you liked"
+            elif taste_score < 0:
+                track["reason"] = "A fresh pick based on your mood and preferences"
+            elif source == "built_in":
+                track["reason"] = f"A {emotion} mood pick"
+            else:
+                track["reason"] = f"Matches your {emotion} mood · {goal.lower()}"
         return {"emotion": emotion, "tracks": tracks, "source": source, "query": query, "language": language, "personalized": bool(liked or disliked_examples)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Feedback data was malformed.") from exc

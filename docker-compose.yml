@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in the project .env file}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5000}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/moodwave}
+      PYTHON_API_URL: http://emotion:8000
+    ports:
+      - "5000:5000"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      emotion:
+        condition: service_started
+    restart: unless-stopped
+
+  emotion:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - moodwave-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  moodwave-data:

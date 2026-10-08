@@ -1,4 +1,4 @@
-import { AudioLines, Check, Heart, Music2, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AudioLines, Check, Heart, ListPlus, Music2, ThumbsDown, ThumbsUp } from "lucide-react";
 
 export default function TrackCard({
   track,
@@ -8,6 +8,8 @@ export default function TrackCard({
   feedbackValue,
   onFeedback,
   onPlay,
+  playlists = [],
+  onAddToPlaylist,
   card = false,
 }) {
   const playable = Boolean(track.url);
@@ -33,6 +35,7 @@ export default function TrackCard({
         <span className="track-info">
           <strong>{track.title}</strong>
           <span>{track.artist}</span>
+          {track.reason && <span className="track-reason">{track.reason}</span>}
         </span>
       </button>
       <div className="track-actions">
@@ -59,6 +62,7 @@ export default function TrackCard({
           title={saved ? "Saved to your collection" : "Save track"}
           aria-label={saved ? `Unsave ${track.title}` : `Save ${track.title}`}
         >{saved ? <Check size={16}/> : <Heart size={16}/>}</button>}
+        {playable && playlists.length > 0 && onAddToPlaylist && <label className="playlist-add" title="Add to playlist"><ListPlus size={14}/><select aria-label={`Add ${track.title} to playlist`} defaultValue="" onChange={(event) => { if (event.target.value) onAddToPlaylist(event.target.value, track); event.target.value = ""; }}><option value="">Add to playlist</option>{playlists.map((playlist) => <option key={playlist._id} value={playlist._id}>{playlist.name}</option>)}</select></label>}
         {playable && <button className="play-button" onClick={() => onPlay?.(track)} aria-label={`Play ${track.title}`}>
           <AudioLines size={15}/>
         </button>}
