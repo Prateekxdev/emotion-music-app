@@ -4,3 +4,6 @@ emotion_model.h5
 browser.json
 .streamlit/secrets.toml
 __pycache__/
+node_modules/
+client/dist/
+server/.env

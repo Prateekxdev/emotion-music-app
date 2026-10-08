@@ -9,7 +9,7 @@ import streamlit as st
 import tensorflow as tf
 from ytmusicapi import YTMusic
 
-st.set_page_config(page_title="Emotion Music Recommender", page_icon="🎵")
+st.set_page_config(page_title="Moodwave | Music for your mood", page_icon="🎧", layout="wide")
 
 ROOT = Path(__file__).resolve().parent
 MODEL_PATH = ROOT / "emotion_model.h5"
@@ -121,13 +121,42 @@ def get_recommendations(emotion, ytmusic, genre="Let the mood decide", goal="Mat
     return songs, False, query
 
 
-st.title("🎵 Emotion Based Music Recommender")
-st.caption("Take a photo to estimate your current emotion and get song suggestions.")
-col1, col2 = st.columns(2)
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+:root { --ink:#f4f4f7; --muted:#a5a6b5; --line:rgba(255,255,255,.09); --violet:#a78bfa; }
+.stApp { background:radial-gradient(ellipse at 85% 0%,rgba(121,82,213,.18),transparent 34%),#0d0e13; color:var(--ink); }
+[data-testid="stHeader"] { background:transparent; }
+[data-testid="stMainBlockContainer"] { max-width:1240px; padding-top:2rem; padding-bottom:4rem; }
+html,body,[class*="css"] { font-family:'DM Sans',sans-serif; }
+h1,h2,h3 { font-family:'Manrope',sans-serif !important; letter-spacing:-.035em; }
+.hero { position:relative; overflow:hidden; padding:2.2rem 2.4rem; border:1px solid var(--line); border-radius:28px; background:linear-gradient(115deg,rgba(37,32,58,.96),rgba(25,25,35,.94) 58%,rgba(35,24,48,.92)); margin-bottom:1.35rem; }
+.hero:after { content:'♫'; position:absolute; right:7%; top:-82px; font-size:250px; line-height:1; color:rgba(221,194,255,.07); font-family:serif; transform:rotate(-12deg); }
+.eyebrow { color:#d1b9ff; font-size:.75rem; font-weight:700; letter-spacing:.17em; text-transform:uppercase; }
+.hero h1 { color:#fff; font-size:clamp(2.2rem,5vw,3.7rem); line-height:1.08; margin:.55rem 0 .7rem; }
+.hero p { color:#c1bdcf; font-size:1.02rem; max-width:580px; margin:0; }
+.section-label { color:#f5f1ff; font:700 1.15rem 'Manrope',sans-serif; margin:.2rem 0 .8rem; }
+.helper { color:#a7a7b5; font-size:.9rem; line-height:1.55; }
+.mood-card { border:1px solid var(--line); border-radius:20px; background:linear-gradient(140deg,#1b1c26,#161720); padding:1.25rem 1.4rem; margin:.4rem 0 1rem; }
+.mood-kicker { color:#b7a5df; font-size:.72rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+.mood-name { color:#fff; font:800 2.1rem 'Manrope',sans-serif; margin:.3rem 0; text-transform:capitalize; }
+.mood-foot { color:#aaa9b8; font-size:.88rem; }
+.track-number { color:#b6a2e8; font-size:.78rem; font-weight:700; }
+div[data-testid="stVerticalBlockBorderWrapper"] { background:rgba(23,24,33,.88); border-color:var(--line); border-radius:20px; }
+div[data-testid="stSelectbox"] label,div[data-testid="stCameraInput"] label { color:#e7e3f0; font-weight:600; }
+div[data-testid="stSelectbox"] div[data-baseweb="select"]>div { background:#181922; border-color:var(--line); border-radius:12px; }
+div[data-testid="stLinkButton"] a { border-radius:12px; background:rgba(167,139,250,.13); border:1px solid rgba(167,139,250,.25); color:#ddceff; font-weight:700; }
+@media(max-width:700px) { [data-testid="stMainBlockContainer"]{padding:1rem 1rem 3rem}.hero{padding:1.5rem;border-radius:20px}.hero:after{right:-20px;font-size:190px} }
+</style>
+<section class="hero"><div class="eyebrow">A soundtrack for right now</div><h1>Let your mood<br>pick the music.</h1><p>Check in with yourself, find your sound, and discover tracks that meet you where you are.</p></section>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="section-label">Shape your listening session</div>', unsafe_allow_html=True)
+col1, col2 = st.columns(2, gap="large")
 with col1:
-    selected_genre = st.selectbox("Music style", GENRE_OPTIONS)
+    selected_genre = st.selectbox("Choose a sound", GENRE_OPTIONS)
 with col2:
-    recommendation_goal = st.selectbox("What do you want music to do?", GOAL_OPTIONS)
+    recommendation_goal = st.selectbox("Set the vibe", GOAL_OPTIONS)
 
 try:
     emotion_model = load_model()
@@ -136,26 +165,57 @@ except Exception as exc:
     st.info("Place emotion_model.h5 in the same folder as musicrec.py.")
     st.stop()
 
-photo = st.camera_input("Take a picture of your face")
+left, right = st.columns([0.9, 1.1], gap="large")
+with left:
+    st.markdown('<div class="section-label">01 &nbsp; Mood check-in</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<p class="helper">Use your camera for a quick emotion estimate. Your photo is processed by the app to predict a mood.</p>', unsafe_allow_html=True)
+        photo = st.camera_input("Take a photo")
+    st.markdown('<p class="helper">A gentle nudge, not a diagnosis. You can retake the photo anytime.</p>', unsafe_allow_html=True)
+
+with right:
+    st.markdown('<div class="section-label">02 &nbsp; Your soundtrack</div>', unsafe_allow_html=True)
+    if "emotion_result" not in st.session_state:
+        st.session_state.emotion_result = None
+
 if photo is not None:
     try:
-        emotion, confidence = predict_emotion(photo.getvalue(), emotion_model)
+        photo_bytes = photo.getvalue()
+        photo_key = hash(photo_bytes)
+        if st.session_state.get("photo_key") != photo_key:
+            st.session_state.emotion_result = predict_emotion(photo_bytes, emotion_model)
+            st.session_state.photo_key = photo_key
+        emotion, confidence = st.session_state.emotion_result
     except (ValueError, cv2.error) as exc:
         st.error(str(exc))
         st.stop()
 
-    st.subheader(f"Detected emotion: {emotion.capitalize()}")
-    st.caption(f"Model confidence: {confidence:.0%}. Emotion predictions can be imperfect.")
-    st.subheader("Recommended songs")
-    tracks, live_results, search_query = get_recommendations(
-        emotion, load_ytmusic(), selected_genre, recommendation_goal
-    )
-    st.caption(f"Search: {search_query}")
-    if not live_results:
-        st.caption("Showing built-in suggestions because YouTube Music search is unavailable.")
-    for index, track in enumerate(tracks, start=1):
-        label = f"**{index}. {track['title']}** — {track['artist']}"
-        if track["url"]:
-            st.markdown(f"{label}  [Open in YouTube Music]({track['url']})")
-        else:
-            st.write(label)
+    with right:
+        st.markdown(f'<div class="mood-card"><div class="mood-kicker">Your mood, right now</div><div class="mood-name">{emotion}</div><div class="mood-foot">AI estimate · {confidence:.0%} model confidence</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="helper">The model can be imperfect. Go with the mood that feels right to you.</div>', unsafe_allow_html=True)
+        tracks, live_results, search_query = get_recommendations(
+            emotion, load_ytmusic(), selected_genre, recommendation_goal
+        )
+        st.markdown('<div class="section-label" style="margin-top:1.3rem">Made for this moment</div>', unsafe_allow_html=True)
+        if not live_results:
+            st.caption("Live search is unavailable. Showing saved suggestions for this mood.")
+        for index, track in enumerate(tracks, start=1):
+            with st.container(border=True):
+                art_col, song_col, link_col = st.columns([0.18, 0.58, 0.24], vertical_alignment="center")
+                with art_col:
+                    if track.get("thumbnail"):
+                        st.image(track["thumbnail"], width=64)
+                    else:
+                        st.markdown(f'<div class="track-number">TRACK<br>{index:02}</div>', unsafe_allow_html=True)
+                with song_col:
+                    st.write(track["title"])
+                    st.caption(track["artist"])
+                with link_col:
+                    if track.get("url"):
+                        st.link_button("Listen ↗", track["url"], use_container_width=True)
+                    else:
+                        st.caption("Suggested track")
+else:
+    with right:
+        with st.container(border=True):
+            st.markdown('<div style="padding:2rem .6rem;text-align:center"><div style="font-size:2.4rem">♫</div><div style="font:700 1.2rem Manrope;color:#f5f1ff;margin:.5rem 0">Your mix is waiting</div><div class="helper">Take a photo to reveal your mood and build a soundtrack around it.</div></div>', unsafe_allow_html=True)

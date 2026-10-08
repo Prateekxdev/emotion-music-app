@@ -3,3 +3,6 @@ opencv-python-headless
 tensorflow
 numpy
 ytmusicapi
+fastapi
+uvicorn[standard]
+python-multipart
