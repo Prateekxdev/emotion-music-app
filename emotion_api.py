@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from urllib.parse import quote
@@ -43,7 +44,13 @@ FALLBACK = {
     "disgust": [("Bitter Sweet Symphony", "The Verve"), ("Radioactive", "Imagine Dragons"), ("The Middle", "Jimmy Eat World"), ("My Own Summer", "Deftones"), ("Take Me Out", "Franz Ferdinand")],
 }
 
-app = FastAPI(title="Moodwave Emotion Music API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(_app):
+    warm_model()
+    yield
+
+
+app = FastAPI(title="Moodwave Emotion Music API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -71,9 +78,6 @@ def warm_model():
         logger.exception("Emotion model could not be loaded during startup")
 
 
-app.add_event_handler("startup", warm_model)
-
-
 def get_ytmusic():
     global _ytmusic
     if _ytmusic is None:
@@ -82,11 +86,11 @@ def get_ytmusic():
             session = requests.Session()
             # Bound provider latency so an unavailable music endpoint falls
             # back to playable search links instead of timing out the app.
-            session.request = partial(session.request, timeout=(3, 5))
+            setattr(session, "request", partial(session.request, timeout=(3, 5)))
             _ytmusic = YTMusic(str(browser_auth), requests_session=session) if browser_auth.exists() else YTMusic(requests_session=session)
         except Exception:
             _ytmusic = False
-    return None if _ytmusic is False else _ytmusic
+    return _ytmusic if isinstance(_ytmusic, YTMusic) else None
 
 
 def classify(image_bytes):
